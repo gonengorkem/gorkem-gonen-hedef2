@@ -8,8 +8,17 @@ from core.zip_processor import extract_and_filter_zip
 from core.diff_engine import run_analysis
 from core.scenario_generator import generate_scenarios
 from core.schematron_engine import validate_xml_with_schematron
+from core.sanitizer_engine import sanitize_ubl_xml
+from core.xslt_renderer import render_ubl_to_html
+import base64
+from typing import Optional
 
 app = FastAPI(title="GİB Hedef Analizörü API")
+
+# Ensure schematrons directory exists
+SCHEMATRONS_DIR = os.path.join(os.path.dirname(__file__), "schematrons")
+os.makedirs(SCHEMATRONS_DIR, exist_ok=True)
+
 
 # Setup CORS
 app.add_middleware(
@@ -100,7 +109,7 @@ async def api_rag_ingest(file: UploadFile = File(...)):
     if not (filename.endswith(".pdf") or filename.endswith(".zip")):
         raise HTTPException(status_code=400, detail="Lütfen sadece Kılavuz (PDF) veya Kılavuzları içeren bir ZIP arşivi yükleyiniz.")
         
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1], mode='wb') as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
@@ -158,22 +167,68 @@ async def api_get_key_status():
     has_key = bool(os.environ.get("GEMINI_API_KEY"))
     return {"hasKey": has_key}
 
+@app.get("/api/schematron/list")
+async def api_list_schematrons():
+    """Returns a list of saved schematron files."""
+    try:
+        files = [f for f in os.listdir(SCHEMATRONS_DIR) if f.endswith('.sch')]
+        return {"status": "success", "data": files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/schematron/upload")
+async def api_upload_schematron(file: UploadFile = File(...)):
+    """Saves a schematron file to the server for future use."""
+    if not file.filename.endswith('.sch'):
+        raise HTTPException(status_code=400, detail="Lütfen geçerli bir .sch dosyası yükleyiniz.")
+        
+    file_path = os.path.join(SCHEMATRONS_DIR, file.filename)
+    try:
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        return {"status": "success", "message": f"{file.filename} başarıyla kaydedildi."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Kayıt işlemi başarısız: {str(e)}")
+
+@app.delete("/api/schematron/{filename}")
+async def api_delete_schematron(filename: str):
+    """Deletes a saved schematron file."""
+    file_path = os.path.join(SCHEMATRONS_DIR, filename)
+    if os.path.exists(file_path) and file_path.startswith(SCHEMATRONS_DIR):
+        os.remove(file_path)
+        return {"status": "success", "message": f"{filename} silindi."}
+    raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+
 @app.post("/api/validate/schematron")
 async def api_validate_schematron(
     xml_file: UploadFile = File(...),
-    sch_file: UploadFile = File(...)
+    sch_file: Optional[UploadFile] = File(None),
+    sch_filename: Optional[str] = Form(None)
 ):
-    if not xml_file.filename.endswith('.xml') or not sch_file.filename.endswith('.sch'):
-        raise HTTPException(status_code=400, detail="Bir .xml ve bir .sch uzantılı dosya yüklenmelidir.")
+    if not xml_file.filename.endswith('.xml'):
+        raise HTTPException(status_code=400, detail="Doğrulanacak dosya .xml olmalıdır.")
+        
+    if not sch_file and not sch_filename:
+        raise HTTPException(status_code=400, detail="Lütfen bir .sch (Şematron) dosyası yükleyin veya kayıtlı kurallardan birini seçin.")
         
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xml") as xml_temp:
         shutil.copyfileobj(xml_file.file, xml_temp)
         xml_path = xml_temp.name
         
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".sch") as sch_temp:
-        shutil.copyfileobj(sch_file.file, sch_temp)
-        sch_path = sch_temp.name
-        
+    sch_path = None
+    is_temp_sch = False
+    
+    if sch_file and sch_file.filename:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sch") as sch_temp:
+            shutil.copyfileobj(sch_file.file, sch_temp)
+            sch_path = sch_temp.name
+            is_temp_sch = True
+    elif sch_filename:
+        sch_path = os.path.join(SCHEMATRONS_DIR, sch_filename)
+        if not os.path.exists(sch_path):
+            os.remove(xml_path)
+            raise HTTPException(status_code=404, detail="Seçilen şematron dosyası sunucuda bulunamadı.")
+            
     try:
         results = validate_xml_with_schematron(xml_path, sch_path)
         return {
@@ -186,8 +241,41 @@ async def api_validate_schematron(
     finally:
         if os.path.exists(xml_path):
             os.remove(xml_path)
-        if os.path.exists(sch_path):
+        if is_temp_sch and sch_path and os.path.exists(sch_path):
             os.remove(sch_path)
+
+@app.post("/api/sanitize/xml")
+async def api_sanitize_xml(file: UploadFile = File(...)):
+    if not file.filename.endswith('.xml'):
+        raise HTTPException(status_code=400, detail="Lütfen geçerli bir .xml dosyası yükleyin.")
+        
+    try:
+        content = await file.read()
+        sanitized_content = sanitize_ubl_xml(content)
+        
+        # Try rendering to HTML (it may fail if XSLT is not embedded, we don't block XML generation though)
+        html_preview = ""
+        try:
+            html_preview = render_ubl_to_html(sanitized_content)
+        except Exception as e:
+            html_preview = f"<div style='padding:20px;color:red;font-family:sans-serif;'><h3>Önizleme Oluşturulamadı</h3><p>{str(e)}</p></div>"
+            
+        # Return base64 XML and HTML via JSON
+        xml_b64 = base64.b64encode(sanitized_content).decode("utf-8")
+        
+        return {
+             "status": "success",
+             "message": "Fatura kişisel verilerden temizlendi ve başarıyla dışa aktarıldı.",
+             "data": {
+                 "xml_base64": xml_b64,
+                 "html_preview": html_preview,
+                 "filename": f"KVKK_Maskeli_{file.filename}"
+             }
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Anonimleştirme işlemi sırasında beklenmedik hata oluştu: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

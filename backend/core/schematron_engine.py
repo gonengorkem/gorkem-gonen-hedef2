@@ -39,10 +39,27 @@ def validate_xml_with_schematron(xml_file_path, sch_file_path):
                 location = f_assert.get("location", "Bilinmeyen Konum")
                 test_rule = f_assert.get("test", "")
                 
+                # Attempt to extract the actual XML node text that failed using the location XPath
+                actual_value = "Değer okunamadı"
+                try:
+                    if location != "Bilinmeyen Konum":
+                        nodes = xml_doc.xpath(location)
+                        if nodes:
+                            elem = nodes[0]
+                            if hasattr(elem, 'text') and elem.text is not None and elem.text.strip():
+                                actual_value = elem.text.strip()
+                            else:
+                                # If the node has no text (e.g., missing child elements), return its tag name nicely
+                                tag_name = etree.QName(elem).localname
+                                actual_value = f"<{tag_name}> (İçeriği boş veya alt elemanı eksik)"
+                except Exception:
+                    pass
+                
                 results["errors"].append({
                     "message": error_msg,
                     "location": location,
-                    "test": test_rule
+                    "test": test_rule,
+                    "value": actual_value
                 })
         
         return results

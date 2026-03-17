@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Upload, FileArchive, CheckCircle2, AlertCircle, XCircle, ChevronDown, ChevronRight, Activity, Cpu, Download, MessageSquare, Send, BookOpen, Sun, Moon, Edit2, FileCode, Code2 } from 'lucide-react';
+import { Upload, FileArchive, CheckCircle2, AlertCircle, XCircle, ChevronDown, ChevronRight, Activity, Cpu, Download, MessageSquare, Send, BookOpen, Sun, Moon, Edit2, FileCode, Code2, ShieldCheck } from 'lucide-react';
 
 function ChatInputBox({ onSend, loading }) {
   const [input, setInput] = useState('');
@@ -51,6 +51,11 @@ function App() {
   const [schResults, setSchResults] = useState(null);
   const [schError, setSchError] = useState(null);
 
+  const [sanFile, setSanFile] = useState(null);
+  const [sanLoading, setSanLoading] = useState(false);
+  const [sanResult, setSanResult] = useState(null);
+  const [sanError, setSanError] = useState(null);
+
   const [activeTab, setActiveTab] = useState('diff'); // 'diff', 'scenarios' or 'chat'
   const [activeMainTab, setActiveMainTab] = useState('analyzer');
   const [chatMessages, setChatMessages] = useState([{role: 'bot', text: 'Merhaba! GİB kılavuzları ve e-Dönüşüm kuralları hakkında bana her şeyi sorabilirsin.'}]);
@@ -63,6 +68,16 @@ function App() {
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
 
+  // Schematron Saved Rules States
+  const [savedSchematrons, setSavedSchematrons] = useState([]);
+  const [selectedSchFilename, setSelectedSchFilename] = useState("");
+
+  const fetchSavedSchematrons = () => {
+     axios.get('http://localhost:8000/api/schematron/list')
+      .then(res => setSavedSchematrons(res.data.data))
+      .catch(console.error);
+  };
+
   useEffect(() => {
     axios.get('http://localhost:8000/api/settings/apikey/status')
       .then(res => setIsApiKeySaved(res.data.hasKey))
@@ -71,6 +86,8 @@ function App() {
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
        setDarkMode(true);
     }
+    
+    fetchSavedSchematrons();
   }, []);
 
   useEffect(() => {
@@ -91,6 +108,12 @@ function App() {
     if (e.target.files && e.target.files.length > 0) {
       if (type === 'xml') setSchXmlFile(e.target.files[0]);
       if (type === 'sch') setSchSchFile(e.target.files[0]);
+    }
+  };
+
+  const handleSanFileChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSanFile(e.target.files[0]);
     }
   };
 
@@ -120,17 +143,41 @@ function App() {
     }
   };
 
+  const handleUploadSchematron = async () => {
+    if (!schSchFile) return;
+    const formData = new FormData();
+    formData.append('file', schSchFile);
+    try {
+        await axios.post('http://localhost:8000/api/schematron/upload', formData);
+        fetchSavedSchematrons();
+        setSelectedSchFilename(schSchFile.name);
+        setSchSchFile(null);
+        alert("Kural sunucuya başarıyla kaydedildi!");
+    } catch(err) {
+        alert("Kayıt sırasında hata: " + err.message);
+    }
+  };
+
   const handleSchematronValidate = async () => {
-    if (!schXmlFile || !schSchFile) {
-      setSchError("Lütfen hem XML hem de .sch dosyasını yükleyiniz.");
+    if (!schXmlFile) {
+      setSchError("Lütfen bir XML dosyasını yükleyiniz.");
       return;
+    }
+    if (!schSchFile && !selectedSchFilename) {
+        setSchError("Lütfen bir .sch dosyasını yükleyin veya sistemden seçin.");
+        return;
     }
     setSchLoading(true);
     setSchError(null);
     setSchResults(null);
     const formData = new FormData();
     formData.append('xml_file', schXmlFile);
-    formData.append('sch_file', schSchFile);
+    if (schSchFile) {
+        formData.append('sch_file', schSchFile);
+    }
+    if (selectedSchFilename) {
+        formData.append('sch_filename', selectedSchFilename);
+    }
 
     try {
       const response = await axios.post('http://localhost:8000/api/validate/schematron', formData, {
@@ -142,6 +189,46 @@ function App() {
     } finally {
       setSchLoading(false);
     }
+  };
+
+  const handleSanitize = async () => {
+    if (!sanFile) {
+      setSanError("Lütfen maskelenecek XML dosyasını yükleyiniz.");
+      return;
+    }
+    setSanLoading(true);
+    setSanError(null);
+    setSanResult(null);
+    const formData = new FormData();
+    formData.append('file', sanFile);
+
+    try {
+      const response = await axios.post('http://localhost:8000/api/sanitize/xml', formData);
+      setSanResult(response.data.data);
+    } catch (err) {
+      setSanError(err.response?.data?.detail || "Sunucu ile iletişim hatası veya maskeleme sorunu.");
+    } finally {
+      setSanLoading(false);
+    }
+  };
+
+  const downloadSanitizedXml = () => {
+      if (!sanResult || !sanResult.xml_base64) return;
+      const byteCharacters = atob(sanResult.xml_base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], {type: 'application/xml'});
+      
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', sanResult.filename || 'Maskelenmis_Belge.xml');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
   };
 
   const handlePdfChange = (e) => {
@@ -180,6 +267,7 @@ function App() {
       const answer = resp.data.data.answer;
       setChatMessages(prev => [...prev, {role: 'bot', text: answer}]);
     } catch (err) {
+      console.error(err);
       setChatMessages(prev => [...prev, {role: 'bot', text: "Hata: Sunucuya bağlanılamadı veya hatalı API Key. Lütfen backend .env dosyanızı kontrol ediniz."}]);
     } finally {
       setChatLoading(false);
@@ -271,6 +359,11 @@ function App() {
             onClick={() => setActiveMainTab('schematron')} 
             className={`py-4 px-6 font-bold text-sm border-b-2 transition flex items-center gap-2 ${activeMainTab === 'schematron' ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
             <CheckCircle2 className="w-5 h-5"/> Şematron Doğrulama
+          </button>
+          <button 
+            onClick={() => setActiveMainTab('sanitizer')} 
+            className={`py-4 px-6 font-bold text-sm border-b-2 transition flex items-center gap-2 ${activeMainTab === 'sanitizer' ? 'border-amber-600 text-amber-700 bg-amber-50/50' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
+            <ShieldCheck className="w-5 h-5"/> KVKK Anonimleştirici
           </button>
           <button 
             onClick={() => setActiveMainTab('assistant')} 
@@ -524,17 +617,37 @@ function App() {
 
               <div className="flex-1">
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Şematron Kuralları (.sch)</label>
-                <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-8 text-center hover:bg-slate-50 dark:bg-slate-950 hover:border-emerald-400 transition-colors cursor-pointer" onClick={() => document.getElementById('sch-sch-file').click()}>
-                  <input id="sch-sch-file" type="file" accept=".sch" className="hidden" onChange={(e) => handleSchFileChange(e, 'sch')} />
-                  <Code2 className={`w-12 h-12 mx-auto mb-3 ${schSchFile ? 'text-emerald-600' : 'text-slate-400'}`} />
-                  {schSchFile ? (
-                    <div>
-                      <p className="font-semibold text-emerald-700">{schSchFile.name}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{(schSchFile.size / 1024).toFixed(2)} KB</p>
-                    </div>
-                  ) : (
-                    <p className="text-slate-500 dark:text-slate-400 text-sm">Şematron (.sch) dosyasını seçin.</p>
-                  )}
+                <div className="flex flex-col gap-3">
+                   <select 
+                      value={selectedSchFilename} 
+                      onChange={(e) => { setSelectedSchFilename(e.target.value); setSchSchFile(null); }}
+                      className="w-full p-4 font-semibold text-emerald-800 border-2 border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors">
+                      <option value="">-- Yeni Dosya Yükleyeceğim --</option>
+                      {savedSchematrons.map(f => (
+                          <option key={f} value={f}>💾 {f}</option>
+                      ))}
+                   </select>
+
+                   {!selectedSchFilename && (
+                        <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 text-center hover:bg-slate-50 dark:bg-slate-950 hover:border-emerald-400 transition-colors cursor-pointer" onClick={() => document.getElementById('sch-sch-file').click()}>
+                          <input id="sch-sch-file" type="file" accept=".sch" className="hidden" onChange={(e) => { handleSchFileChange(e, 'sch'); setSelectedSchFilename(''); }} />
+                          <Code2 className={`w-8 h-8 mx-auto mb-2 ${schSchFile ? 'text-emerald-600' : 'text-slate-400'}`} />
+                          {schSchFile ? (
+                            <p className="font-semibold text-emerald-700 text-sm truncate">{schSchFile.name}</p>
+                          ) : (
+                            <p className="text-slate-500 dark:text-slate-400 text-xs">Aygıttan .sch dosyası seçin.</p>
+                          )}
+                        </div>
+                   )}
+                   
+                   {schSchFile && !selectedSchFilename && (
+                        <button 
+                            title="Sürekli aynı dosyayı yüklemek yerine sunucuya kaydedin ve menüden seçin"
+                            onClick={handleUploadSchematron}
+                            className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg font-bold hover:bg-indigo-100 transition-colors self-end flex items-center gap-1 shadow-sm">
+                            ⬆️ Bu Kuralı Sunucuya Kaydet
+                        </button>
+                   )}
                 </div>
               </div>
             </div>
@@ -547,9 +660,9 @@ function App() {
 
             <button 
               onClick={handleSchematronValidate} 
-              disabled={schLoading || !schXmlFile || !schSchFile}
+              disabled={schLoading || !schXmlFile || (!schSchFile && !selectedSchFilename)}
               className={`w-full py-4 rounded-xl flex items-center justify-center gap-2 font-bold text-lg transition-all ${
-                schLoading || !schXmlFile || !schSchFile 
+                schLoading || !schXmlFile || (!schSchFile && !selectedSchFilename)
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' 
                 : 'bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-lg shadow-emerald-600/30'
               }`}
@@ -581,9 +694,12 @@ function App() {
                     {schResults.errors.map((errItem, idx) => (
                       <div key={idx} className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-4">
                         <p className="font-semibold text-slate-800 dark:text-slate-200">{errItem.message}</p>
-                        <div className="mt-2 text-xs text-slate-500 font-mono bg-slate-100 dark:bg-slate-800 p-2 rounded break-all">
-                          <div><strong>Konum (Location):</strong> {errItem.location}</div>
-                          <div className="mt-1"><strong>Kural (Test):</strong> {errItem.test}</div>
+                        <div className="bg-slate-800 rounded-lg p-3 text-sm text-slate-300 font-mono overflow-auto break-all">
+                           <p className="mb-2"><span className="text-slate-500">Konum (Location):</span> {errItem.location}</p>
+                           <p className="mb-2"><span className="text-slate-500">Kural (Test):</span> {errItem.test}</p>
+                           {errItem.value && (
+                              <p className="text-amber-400 font-semibold"><span className="text-slate-500 font-normal">Sizin XML'deki Değeriniz (Value):</span> {errItem.value}</p>
+                           )}
                         </div>
                       </div>
                     ))}
@@ -592,6 +708,93 @@ function App() {
               </div>
             )}
             
+          </div>
+        </div>
+
+        {/* KVKK SANITIZER TAB */}
+        <div className={activeMainTab === 'sanitizer' ? 'block' : 'hidden'}>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-sm border border-slate-200 dark:border-slate-800 mb-8 max-w-4xl mx-auto">
+            <div className="text-center mb-10">
+              <h2 className="text-2xl font-bold mb-2 text-amber-600 flex justify-center items-center gap-2"><ShieldCheck className="w-8 h-8"/> UBL XML KVKK Anonimleştirici</h2>
+              <p className="text-slate-500 dark:text-slate-400">Canlı ortamdaki gerçek faturalarınızı ve hassas şirket/müşteri verilerinizi içeren .xml dosyalarını orijinal yapısını ve formatını bozmadan güvenle maskeleyin.</p>
+            </div>
+
+            <div className="mb-8">
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Gizlenecek Fatura / İrsaliye Belgesi (.xml)</label>
+                <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-8 text-center hover:bg-slate-50 dark:bg-slate-950 hover:border-amber-400 transition-colors cursor-pointer" onClick={() => document.getElementById('san-xml-file').click()}>
+                  <input id="san-xml-file" type="file" accept=".xml" className="hidden" onChange={handleSanFileChange} />
+                  <FileCode className={`w-12 h-12 mx-auto mb-3 ${sanFile ? 'text-amber-600' : 'text-slate-400'}`} />
+                  {sanFile ? (
+                    <div>
+                      <p className="font-semibold text-amber-700">{sanFile.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{(sanFile.size / 1024).toFixed(2)} KB</p>
+                    </div>
+                  ) : (
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">Anonimleştirilecek XML dosyasını yüklemek için tıklayın.</p>
+                  )}
+                </div>
+            </div>
+
+            {sanError && (
+              <div className="bg-red-50 text-red-600 p-4 rounded-lg flex items-center gap-3 mb-6">
+                 <AlertCircle className="w-5 h-5" /> {sanError}
+              </div>
+            )}
+
+            <button 
+              onClick={handleSanitize} 
+              disabled={sanLoading || !sanFile}
+              className={`w-full py-4 rounded-xl flex items-center justify-center gap-2 font-bold text-lg transition-all ${
+                sanLoading || !sanFile 
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' 
+                : 'bg-amber-600 text-white hover:bg-amber-700 hover:shadow-lg shadow-amber-600/30'
+              }`}
+            >
+              {sanLoading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  Anonimleştiriliyor...
+                </>
+              ) : (
+                <><ShieldCheck className="w-5 h-5"/> Gizli Verileri Maskele ve Belgeyi İndir</>
+              )}
+            </button>
+            
+            {sanResult && (
+              <div className="mt-8 border-t border-slate-200 dark:border-slate-800 pt-8">
+                 <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-6 py-4 rounded-2xl w-full flex flex-col items-center text-center shadow-sm mb-6">
+                    <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                    <h3 className="font-bold text-lg mb-1">Maskeleme Başarıyla Tamamlandı!</h3>
+                    <p className="text-sm mb-4">TCKN, VKN, İsim, Telefon ve Adres gibi hassas veriler geçersiz (dummy) test verileriyle değiştirildi. Belgenin yapısı korundu.</p>
+                    <button 
+                      onClick={downloadSanitizedXml}
+                      className="inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl transition-colors shadow-md w-full max-w-sm">
+                       <Download className="w-5 h-5"/> Anonim XML'i İndir
+                    </button>
+                 </div>
+
+                 <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm">
+                    <div className="bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-3 font-semibold text-sm text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                       <FileCode className="w-4 h-4"/> Maskelenmiş Belge Önizlemesi (XSLT Render)
+                    </div>
+                    {sanResult.html_preview && !sanResult.html_preview.includes('Önizleme Oluşturulamadı') ? (
+                        <iframe 
+                           srcDoc={sanResult.html_preview}
+                           className="w-full h-[600px] border-none bg-white"
+                           title="XSLT Preview"
+                        />
+                    ) : (
+                        <div className="p-8 text-center text-slate-500 bg-slate-50 dark:bg-slate-950 h-48 flex items-center justify-center">
+                           <div>
+                              <AlertCircle className="w-8 h-8 mx-auto mb-2 text-slate-400" />
+                              <p>Bu belgede geçerli bir görselleştirme (XSLT) dosyası bulunamadı, ancak XML olarak indirebilirsiniz.</p>
+                           </div>
+                        </div>
+                    )}
+                 </div>
+              </div>
+            )}
+
           </div>
         </div>
 
