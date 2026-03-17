@@ -1,0 +1,26 @@
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+*.log
+
+# Databases
+chroma_db/
+*.sqlite3
+
+# Node / React
+node_modules/
+dist/
+dist-ssr/
+*.local
+.DS_Store
+
+# Diğer
+debug.log
+debug_files.log
