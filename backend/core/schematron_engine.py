@@ -31,11 +31,11 @@ def validate_xml_with_schematron(xml_file_path, sch_file_path):
             ns = {"svrl": "http://purl.oclc.org/dsdl/svrl"}
             
             # Find all failed assertions
-            failed_asserts = report.findall(".//svrl:failed-assert", namespaces=ns)
+            failed_asserts = report.findall(".//svrl:failed-assert", namespaces=ns) if report is not None else []
             
             for f_assert in failed_asserts:
                 text_elem = f_assert.find("svrl:text", namespaces=ns)
-                error_msg = text_elem.text.strip() if text_elem is not None else "Bilinmeyen Hata"
+                error_msg = text_elem.text.strip() if text_elem is not None and text_elem.text is not None else "Bilinmeyen Hata"
                 location = f_assert.get("location", "Bilinmeyen Konum")
                 test_rule = f_assert.get("test", "")
                 

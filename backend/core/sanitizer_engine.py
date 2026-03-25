@@ -39,7 +39,8 @@ def sanitize_ubl_xml(xml_content: bytes) -> bytes:
             # Special handling for VKN/TCKN (CompanyID, IdentificationCode, etc.)
             elif local_name in ["CompanyID", "IdentificationCode", "ID"] and elem.text and elem.text.strip():
                 # Check if parent is PartyIdentification or similar to avoid messing up generic IDs (like Invoice/ID)
-                parent_local = etree.QName(elem.getparent()).localname if elem.getparent() is not None else ""
+                parent = elem.getparent()
+                parent_local = etree.QName(parent).localname if parent is not None else ""
                 
                 # If it's a PartyTaxScheme/CompanyID or PartyIdentification/ID or Person/NationalityID
                 if parent_local in ["PartyTaxScheme", "PartyIdentification", "Person"]:

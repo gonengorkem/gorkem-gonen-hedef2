@@ -38,7 +38,7 @@ async def analyze_packages(
     old_package: UploadFile = File(...),
     new_package: UploadFile = File(...)
 ):
-    if not old_package.filename.endswith('.zip') or not new_package.filename.endswith('.zip'):
+    if not old_package.filename or not new_package.filename or not old_package.filename.endswith('.zip') or not new_package.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Değerlendirme için .zip dosyaları gereklidir.")
     
     # Save uploaded files temporarily
@@ -106,13 +106,15 @@ import zipfile
 
 @app.post("/api/rag/ingest")
 async def api_rag_ingest(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Dosya adı okunamadı.")
     filename = file.filename.lower()
     if not (filename.endswith(".pdf") or filename.endswith(".zip")):
         raise HTTPException(status_code=400, detail="Lütfen sadece Kılavuz (PDF) veya Kılavuzları içeren bir ZIP arşivi yükleyiniz.")
         
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1], mode='wb') as tmp:
+    with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
         content = await file.read()
-        tmp.write(content)
+        tmp.write(content) # type: ignore
         tmp_path = tmp.name
         
     try:
@@ -148,7 +150,7 @@ async def api_rag_chat(query: str = Form(...)):
 @app.post("/api/rag/chat/stream")
 async def api_rag_chat_stream(query: str = Form(...)):
     try:
-        return StreamingResponse(query_rag_stream(query), media_type="text/plain")
+        return StreamingResponse(query_rag_stream(query), media_type="text/plain") # type: ignore
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -189,7 +191,7 @@ async def api_list_schematrons():
 @app.post("/api/schematron/upload")
 async def api_upload_schematron(file: UploadFile = File(...)):
     """Saves a schematron file to the server for future use."""
-    if not file.filename.endswith('.sch'):
+    if not file.filename or not file.filename.endswith('.sch'):
         raise HTTPException(status_code=400, detail="Lütfen geçerli bir .sch dosyası yükleyiniz.")
         
     file_path = os.path.join(SCHEMATRONS_DIR, file.filename)
@@ -215,7 +217,7 @@ async def api_validate_schematron(
     sch_file: Optional[UploadFile] = File(None),
     sch_filename: Optional[str] = Form(None)
 ):
-    if not xml_file.filename.endswith('.xml'):
+    if not xml_file.filename or not xml_file.filename.endswith('.xml'):
         raise HTTPException(status_code=400, detail="Doğrulanacak dosya .xml olmalıdır.")
         
     if not sch_file and not sch_filename:
@@ -256,7 +258,7 @@ async def api_validate_schematron(
 
 @app.post("/api/sanitize/xml")
 async def api_sanitize_xml(file: UploadFile = File(...)):
-    if not file.filename.endswith('.xml'):
+    if not file.filename or not file.filename.endswith('.xml'):
         raise HTTPException(status_code=400, detail="Lütfen geçerli bir .xml dosyası yükleyin.")
         
     try:
