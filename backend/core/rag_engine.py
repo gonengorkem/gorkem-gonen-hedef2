@@ -141,3 +141,37 @@ def query_rag(query_text: str):
         "answer": response.content,
         "sources": sources
     }
+
+async def query_rag_stream(query_text: str):
+    """Queries the Chroma vector database and generates a streaming answer using Gemini."""
+    if not os.environ.get("GEMINI_API_KEY"):
+        yield "Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin."
+        return
+        
+    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings())
+    
+    results = db.similarity_search_with_relevance_scores(query_text, k=4)
+    
+    if len(results) == 0:
+        context_text = ""
+    else:
+        context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
+        
+    prompt_template = f"""
+    Sen, test uzmanları için geliştirilmiş "GİB Paket Analizörü" uygulaması içinde çalışan uzman bir e-Dönüşüm asistanısın.
+    Aşağıdaki resmi GİB/Kılavuz bağlamını (context) kullanarak kullanıcının sorusuna en doğru ve net cevabı ver. 
+    Eğer bağlamda cevaba dair bir kural geçmiyorsa, bunu açıkça belirt ancak bir e-Dönüşüm uzmanı olarak bildiğin teknik bilgileri kullanarak (UBL-TR standartları gibi) yardımcı ol. 
+    Mümkün olduğunca teknik, net ve doğrudan test edilebilir bilgiler sağla. Yorum katma, kuralı söyle.
+
+    [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ]:
+    {context_text}
+
+    Kullanıcının Sorusu: {query_text}
+    """
+    
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+    
+    async for chunk in model.astream(prompt_template):
+        if chunk.content:
+            yield chunk.content
+

@@ -74,7 +74,13 @@ function App() {
 
   const fetchSavedSchematrons = () => {
      axios.get('http://localhost:8000/api/schematron/list')
-      .then(res => setSavedSchematrons(res.data.data))
+      .then(res => {
+          const files = res.data.data;
+          setSavedSchematrons(files);
+          if (files.length > 0) {
+              setSelectedSchFilename(files[0]);
+          }
+      })
       .catch(console.error);
   };
 
@@ -273,6 +279,65 @@ function App() {
       setChatLoading(false);
     }
   };
+
+  const handleSendChatStream = async (userMsg) => {
+    if (!userMsg.trim()) return;
+    
+    setChatMessages(prev => [...prev, {role: 'user', text: userMsg}]);
+    setChatLoading(true);
+    
+    // Geçici olarak boş bot mesajı ekle
+    setChatMessages(prev => [...prev, {role: 'bot', text: ''}]);
+    
+    const formData = new FormData();
+    formData.append('query', userMsg);
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/rag/chat/stream', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP hatası! status: ${response.status}`);
+      }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      setChatLoading(false);
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        
+        setChatMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          newMessages[lastIndex] = {
+            ...newMessages[lastIndex],
+            text: newMessages[lastIndex].text + chunk
+          };
+          return newMessages;
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setChatMessages(prev => {
+        const newMessages = [...prev];
+        const lastIndex = newMessages.length - 1;
+        newMessages[lastIndex] = {
+            ...newMessages[lastIndex],
+            text: "Hata: Sunucuya bağlanılamadı veya yayın akışı başlatılamadı."
+        };
+        return newMessages;
+      });
+      setChatLoading(false);
+    }
+  };
+
 
   const handleSaveApiKey = async () => {
     if (!geminiKey.trim()) return;
@@ -622,10 +687,10 @@ function App() {
                       value={selectedSchFilename} 
                       onChange={(e) => { setSelectedSchFilename(e.target.value); setSchSchFile(null); }}
                       className="w-full p-4 font-semibold text-emerald-800 border-2 border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors">
-                      <option value="">-- Yeni Dosya Yükleyeceğim --</option>
                       {savedSchematrons.map(f => (
-                          <option key={f} value={f}>💾 {f}</option>
+                          <option key={f} value={f}>✅ Sistemdeki Hazır Kural: {f}</option>
                       ))}
+                      <option value="">➕ Yeni/Farklı Şematron Dosyası Yükleyeceğim</option>
                    </select>
 
                    {!selectedSchFilename && (
@@ -905,7 +970,7 @@ function App() {
                       )}
                    </div>
                    
-                   <ChatInputBox onSend={handleSendChat} loading={chatLoading} />
+                   <ChatInputBox onSend={handleSendChatStream} loading={chatLoading} />
                 </div>
              </div>
           </div>

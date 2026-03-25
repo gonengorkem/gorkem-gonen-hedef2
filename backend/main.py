@@ -99,8 +99,9 @@ async def analyze_packages(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"İşleme sırasında bir hata oluştu: {str(e)}")
 
-from core.rag_engine import ingest_document, ingest_directory, query_rag
+from core.rag_engine import ingest_document, ingest_directory, query_rag, query_rag_stream
 from fastapi import Form
+from fastapi.responses import StreamingResponse
 import zipfile
 
 @app.post("/api/rag/ingest")
@@ -139,6 +140,15 @@ async def api_rag_chat(query: str = Form(...)):
     try:
         res = query_rag(query)
         return {"status": "success", "data": res}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/rag/chat/stream")
+async def api_rag_chat_stream(query: str = Form(...)):
+    try:
+        return StreamingResponse(query_rag_stream(query), media_type="text/plain")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
