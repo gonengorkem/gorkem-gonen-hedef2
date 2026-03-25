@@ -38,6 +38,44 @@ def extract_elements(tree):
         })
     return elements
 
+def get_display_name(tag_name, item):
+    attrs = item.get("attributes", {})
+    
+    # 1. Öncelikli nitelikler (attributes)
+    for attr in ["name", "id", "select", "test", "match", "class"]:
+        if attr in attrs:
+            val = attrs[attr]
+            if len(val) > 40:
+                val = val[:40] + "..."
+            return f"{tag_name} [{attr}='{val}']"
+            
+    # 2. Varsa diğer rastgele bir nitelik (style, width vs.)
+    if attrs:
+        first_attr = list(attrs.keys())[0]
+        val = attrs[first_attr]
+        if len(val) > 40:
+            val = val[:40] + "..."
+        return f"{tag_name} [{first_attr}='{val}']"
+            
+    # 3. Metin içeriği
+    text = item.get("text")
+    if text:
+        snippet = text[:30] + "..." if len(text) > 30 else text
+        snippet = snippet.replace('\n', ' ').replace('\r', '')
+        return f"{tag_name} (\"{snippet}\")"
+        
+    # 4. Hiçbir şey yoksa (örn: düz <tr>, <choose>, <otherwise>), XPath'ten üst elemanını (parent) göster
+    xpath = item.get("xpath", "")
+    if xpath:
+        parts = xpath.strip('/').split('/')
+        if len(parts) >= 2:
+            # "[1]", "[2]" gibi indeks kısımlarını atıp sadece ebeveyn tag adını alalım
+            parent = parts[-2].split('[')[0]
+            if parent:
+                return f"{tag_name} (in {parent})"
+                
+    return tag_name
+
 def compare_files(old_filepath: str, new_filepath: str):
     old_tree = parse_xml_file(old_filepath)
     new_tree = parse_xml_file(new_filepath)
@@ -50,25 +88,29 @@ def compare_files(old_filepath: str, new_filepath: str):
     # Check elements in new tree
     for tag_name, new_list in new_els.items():
         if tag_name not in old_els:
-            diff_report.append({
-                "type": "added",
-                "target": tag_name,
-                "message": f"'{tag_name}' adlı yeni bir element eklendi.",
-                "details": new_list[0]["attributes"] if new_list else {}
-            })
+            for new_item in new_list:
+                display_name = get_display_name(tag_name, new_item)
+                diff_report.append({
+                    "type": "added",
+                    "target": display_name,
+                    "xpath": new_item["xpath"],
+                    "message": f"'{display_name}' adlı yeni bir element eklendi.",
+                    "details": new_item["attributes"]
+                })
             continue
             
         # Simplistic compare for attribute changes on first match (can be deep mapped by xpath)
         old_list = old_els[tag_name]
         for new_item in new_list:
+            display_name = get_display_name(tag_name, new_item)
             # find matching old item by xpath
             matched_old = next((x for x in old_list if x["xpath"] == new_item["xpath"]), None)
             if matched_old is None:
                 diff_report.append({
                     "type": "added",
-                    "target": tag_name,
+                    "target": display_name,
                     "xpath": new_item["xpath"],
-                    "message": f"'{tag_name}' elementi listeye yeni eklendi.",
+                    "message": f"'{display_name}' elementi listeye yeni eklendi.",
                 })
             else:
                 # Compare attributes
@@ -76,38 +118,46 @@ def compare_files(old_filepath: str, new_filepath: str):
                     if k not in matched_old["attributes"]:
                         diff_report.append({
                             "type": "attribute_added",
-                            "target": tag_name,
+                            "target": display_name,
                             "xpath": new_item["xpath"],
-                            "message": f"'{tag_name}' elementine '{k}={v}' özelliği eklendi."
+                            "message": f"'{display_name}' elementine '{k}={v}' özelliği eklendi."
                         })
                     elif matched_old["attributes"][k] != v:
                         diff_report.append({
                             "type": "modified",
-                            "target": tag_name,
+                            "target": display_name,
                             "xpath": new_item["xpath"],
-                            "message": f"'{tag_name}' elementinin '{k}' özelliği '{matched_old['attributes'][k]}' değerinden '{v}' değerine güncellendi."
+                            "message": f"'{display_name}' elementinin '{k}' özelliği '{matched_old['attributes'][k]}' değerinden '{v}' değerine güncellendi."
                         })
                         
     # Check elements removed from old tree
     for tag_name, old_list in old_els.items():
         if tag_name not in new_els:
-            diff_report.append({
-                "type": "removed",
-                "target": tag_name,
-                "message": f"'{tag_name}' adlı element tamamen kaldırıldı."
-            })
+            for old_item in old_list:
+                display_name = get_display_name(tag_name, old_item)
+                diff_report.append({
+                    "type": "removed",
+                    "target": display_name,
+                    "xpath": old_item["xpath"],
+                    "message": f"'{display_name}' adlı element tamamen kaldırıldı."
+                })
         else:
             new_list = new_els[tag_name]
             for old_item in old_list:
+                display_name = get_display_name(tag_name, old_item)
                 matched_new = next((x for x in new_list if x["xpath"] == old_item["xpath"]), None)
                 if matched_new is None:
                     diff_report.append({
                         "type": "removed",
-                        "target": tag_name,
+                        "target": display_name,
                         "xpath": old_item["xpath"],
-                        "message": f"'{tag_name}' elementinin bir instance'ı kaldırıldı.",
+                        "message": f"'{display_name}' elementinin bir instance'ı kaldırıldı.",
                     })
                     
+    # Sort order: added, modified, removed
+    type_order = {"added": 0, "attribute_added": 1, "modified": 1, "removed": 2}
+    diff_report.sort(key=lambda x: type_order.get(x["type"], 9))
+    
     return diff_report
 
 def run_analysis(old_data: dict, new_data: dict):

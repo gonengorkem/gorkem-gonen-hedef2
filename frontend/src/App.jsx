@@ -58,6 +58,7 @@ function App() {
 
   const [activeTab, setActiveTab] = useState('diff'); // 'diff', 'scenarios' or 'chat'
   const [activeMainTab, setActiveMainTab] = useState('analyzer');
+  const [collapsedFiles, setCollapsedFiles] = useState({});
   const [chatMessages, setChatMessages] = useState([{role: 'bot', text: 'Merhaba! GİB kılavuzları ve e-Dönüşüm kuralları hakkında bana her şeyi sorabilirsin.'}]);
   const [chatLoading, setChatLoading] = useState(false);
   const [pdfUploadLoading, setPdfUploadLoading] = useState(false);
@@ -89,9 +90,9 @@ function App() {
       .then(res => setIsApiKeySaved(res.data.hasKey))
       .catch(err => console.error(err));
       
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-       setDarkMode(true);
-    }
+    // if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    //    setDarkMode(true);
+    // }
     
     fetchSavedSchematrons();
   }, []);
@@ -132,6 +133,7 @@ function App() {
     setLoading(true);
     setError(null);
     setResults(null);
+    setCollapsedFiles({});
 
     const formData = new FormData();
     formData.append('old_package', oldFile);
@@ -530,17 +532,29 @@ function App() {
                <div className="flex space-x-2">
                  <button 
                    onClick={() => setActiveTab('diff')} 
-                   className={`px-6 py-3 font-semibold text-sm rounded-t-lg transition border-b-2 ${activeTab === 'diff' ? 'bg-white dark:bg-slate-900 border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200'}`}>
+                   className={`px-6 py-3 font-semibold text-sm rounded-t-lg transition border-b-2 ${activeTab === 'diff' ? 'bg-white dark:bg-slate-900 border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
                    Fark Görüntüleyici (Diff)
                  </button>
                  <button 
                    onClick={() => setActiveTab('scenarios')}
-                   className={`px-6 py-3 font-semibold text-sm rounded-t-lg transition border-b-2 flex items-center gap-2 ${activeTab === 'scenarios' ? 'bg-white dark:bg-slate-900 border-emerald-500 text-emerald-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200'}`}>
+                   className={`px-6 py-3 font-semibold text-sm rounded-t-lg transition border-b-2 flex items-center gap-2 ${activeTab === 'scenarios' ? 'bg-white dark:bg-slate-900 border-emerald-500 text-emerald-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
                    Otomatik Test Senaryoları
                    <span className="bg-emerald-100 text-emerald-700 py-0.5 px-2 rounded-full text-xs font-bold">{results.scenarios.length} Senaryo</span>
                  </button>
                  {/* Assistant moved to main tabs */}
                </div>
+               
+               {activeTab === 'diff' && (
+                 <button 
+                   onClick={() => {
+                        const newCollapsed = {};
+                        results.diff_results.forEach(f => newCollapsed[f.file] = true);
+                        setCollapsedFiles(newCollapsed);
+                   }} 
+                   className="mb-2 mr-4 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition shadow-sm">
+                   Tüm Dosyaları Gizle
+                 </button>
+               )}
                
                {activeTab === 'scenarios' && (
                  <button 
@@ -552,8 +566,7 @@ function App() {
             </div>
 
             {/* CONTENT TABS */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl rounded-tl-none shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden min-h-[500px]">
-               
+            <div className="bg-white dark:bg-slate-900 rounded-2xl rounded-tl-none shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
                {activeTab === 'diff' && (
                  <div className="p-6">
                     {results.diff_results.filter(f => f.status !== 'unchanged').length === 0 ? (
@@ -563,19 +576,35 @@ function App() {
                       </div>
                     ) : (
                       <div className="space-y-6">
-                         {results.diff_results.filter(f => f.status !== 'unchanged').map((file, idx) => (
-                           <div key={idx} className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-950 shadow-sm">
-                              <div className="bg-slate-100 dark:bg-slate-800 p-4 font-mono text-sm font-semibold border-b border-slate-200 dark:border-slate-800 flex justify-between items-center text-slate-700 dark:text-slate-300">
-                                <span>{file.file}</span>
-                                <span className={`text-xs px-2 py-1 rounded-md uppercase font-bold shadow-sm border
-                                  ${file.status === 'new_file' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
-                                  file.status === 'deleted_file' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}
-                                `}>
-                                  {file.status === 'new_file' ? 'YENİ EKLENDİ' : file.status === 'deleted_file' ? 'SİLİNDİ' : 'DEĞİŞTİRİLDİ'}
-                                </span>
-                              </div>
-                              <div className="p-5 space-y-4 bg-white dark:bg-slate-900">
-                                {file.diff.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-lg">Ana dosya eklendi veya kaldırıldı. (Kapsayıcı değişiklik)</p>}
+                         {results.diff_results.filter(f => f.status !== 'unchanged').map((file, idx) => {
+                            const defaultCollapsed = file.file.includes('general.xslt') || file.diff.length > 50;
+                            const isCollapsed = collapsedFiles[file.file] !== undefined ? collapsedFiles[file.file] : defaultCollapsed;
+                            
+                            return (
+                               <div key={idx} className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-950 shadow-sm">
+                                  <div 
+                                    onClick={() => setCollapsedFiles(prev => ({...prev, [file.file]: !isCollapsed}))}
+                                    className="bg-slate-100 dark:bg-slate-800 p-4 font-mono text-sm font-semibold border-b border-slate-200 dark:border-slate-800 flex justify-between items-center text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition select-none">
+                                    <div className="flex items-center gap-2">
+                                        {isCollapsed ? <ChevronRight className="w-5 h-5 text-indigo-500" /> : <ChevronDown className="w-5 h-5 text-indigo-500" />}
+                                        <span>{file.file}</span>
+                                        <span className="ml-2 bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full text-xs font-bold tracking-wide">
+                                           {file.diff.length} Değişiklik
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <span className={`text-xs px-2 py-1 rounded-md uppercase font-bold shadow-sm border
+                                          ${file.status === 'new_file' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
+                                          file.status === 'deleted_file' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}
+                                        `}>
+                                          {file.status === 'new_file' ? 'YENİ EKLENDİ' : file.status === 'deleted_file' ? 'SİLİNDİ' : 'DEĞİŞTİRİLDİ'}
+                                        </span>
+                                    </div>
+                                  </div>
+                                  
+                                  {!isCollapsed && (
+                                     <div className="p-5 space-y-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+                                       {file.diff.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-lg">Ana dosya eklendi veya kaldırıldı. (Kapsayıcı değişiklik)</p>}
                                 {file.diff.map((diffItem, dIdx) => (
                                    <div key={dIdx} className={`p-4 rounded-xl text-sm border ${
                                       diffItem.type.includes('added') ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900' :
@@ -601,8 +630,10 @@ function App() {
                                    </div>
                                 ))}
                               </div>
-                           </div>
-                         ))}
+                           )}
+                               </div>
+                             );
+                          })}
                       </div>
                     )}
                  </div>
