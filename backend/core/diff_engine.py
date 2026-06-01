@@ -76,7 +76,40 @@ def get_display_name(tag_name, item):
                 
     return tag_name
 
-def compare_files(old_filepath: str, new_filepath: str):
+def get_human_readable(filename: str, tag_name: str, ctype: str) -> str:
+    filename = filename.lower()
+    tag_name = tag_name.lower()
+    
+    if filename.endswith('.xslt'):
+        if 'variable' in tag_name:
+            if ctype == "added": return "Fatura tasarımında arka planda bir değer/formül hesaplanmak üzere yeni bir değişken eklendi."
+            elif ctype == "removed": return "Tasarımda kullanılan bir hesaplama değişkeni kaldırıldı."
+            else: return "Tasarımda kullanılan bir hesaplamanın formülü veya koşulu güncellendi."
+        elif tag_name in ['if', 'choose', 'when', 'otherwise']:
+            return "Fatura görseline (PDF/HTML) yeni bir koşul eklendi (örneğin: belirli bir vergi türü varsa şunu göster)."
+        elif tag_name == 'value-of':
+            return "Fatura üzerinde gösterilecek yeni bir XML verisi eklendi (veya formatı değiştirildi)."
+        else:
+            return "Faturanın HTML/PDF görsel dizaynında (tablo, sütun, font vb.) bir değişiklik yapıldı."
+            
+    elif filename.endswith('.sch'):
+        if tag_name == 'assert':
+             if ctype == "added": return "GİB sisteminde belgeyi 'RED' durumuna düşürecek (HATA) yeni bir zorunlu kural eklendi."
+             elif ctype == "removed": return "Zarfı reddeden zorunlu bir kural kaldırıldı (artık hata alınmayacak)."
+             else: return "Zarfın onaylanma veya reddedilme koşulunu belirleyen bir kural güncellendi."
+        elif tag_name == 'report':
+             if ctype == "added": return "Belgeyi reddetmeyen ancak GİB'den 'UYARI' dönmesine sebep olan yeni bir kural eklendi."
+             elif ctype == "removed": return "GİB'de uyarı verdiren bir kural tamamen kaldırıldı."
+             else: return "Bir GİB uyarısının mesajı veya koşulu güncellendi."
+        else:
+             return "Şematron doğrulama algoritmalarında teknik bir değişiklik yapıldı."
+             
+    elif filename.endswith('.xsd'):
+        return "Faturanın XML veri iskeletinde (örneğin yeni bir XML alanının zorunlu kılınması) kalıcı bir yapı değişikliği yapıldı."
+        
+    return "Dosyada standart bir güncelleme yapıldı."
+
+def compare_files(old_filepath: str, new_filepath: str, filename: str = ""):
     old_tree = parse_xml_file(old_filepath)
     new_tree = parse_xml_file(new_filepath)
     
@@ -95,7 +128,8 @@ def compare_files(old_filepath: str, new_filepath: str):
                     "target": display_name,
                     "xpath": new_item["xpath"],
                     "message": f"'{display_name}' adlı yeni bir element eklendi.",
-                    "details": new_item["attributes"]
+                    "details": new_item["attributes"],
+                    "human_readable": get_human_readable(filename, tag_name, "added")
                 })
             continue
             
@@ -111,6 +145,7 @@ def compare_files(old_filepath: str, new_filepath: str):
                     "target": display_name,
                     "xpath": new_item["xpath"],
                     "message": f"'{display_name}' elementi listeye yeni eklendi.",
+                    "human_readable": get_human_readable(filename, tag_name, "added")
                 })
             else:
                 # Compare attributes
@@ -120,14 +155,16 @@ def compare_files(old_filepath: str, new_filepath: str):
                             "type": "attribute_added",
                             "target": display_name,
                             "xpath": new_item["xpath"],
-                            "message": f"'{display_name}' elementine '{k}={v}' özelliği eklendi."
+                            "message": f"'{display_name}' elementine '{k}={v}' özelliği eklendi.",
+                            "human_readable": get_human_readable(filename, tag_name, "modified")
                         })
                     elif matched_old["attributes"][k] != v:
                         diff_report.append({
                             "type": "modified",
                             "target": display_name,
                             "xpath": new_item["xpath"],
-                            "message": f"'{display_name}' elementinin '{k}' özelliği '{matched_old['attributes'][k]}' değerinden '{v}' değerine güncellendi."
+                            "message": f"'{display_name}' elementinin '{k}' özelliği '{matched_old['attributes'][k]}' değerinden '{v}' değerine güncellendi.",
+                            "human_readable": get_human_readable(filename, tag_name, "modified")
                         })
                         
     # Check elements removed from old tree
@@ -139,7 +176,8 @@ def compare_files(old_filepath: str, new_filepath: str):
                     "type": "removed",
                     "target": display_name,
                     "xpath": old_item["xpath"],
-                    "message": f"'{display_name}' adlı element tamamen kaldırıldı."
+                    "message": f"'{display_name}' adlı element tamamen kaldırıldı.",
+                    "human_readable": get_human_readable(filename, tag_name, "removed")
                 })
         else:
             new_list = new_els[tag_name]
@@ -152,6 +190,7 @@ def compare_files(old_filepath: str, new_filepath: str):
                         "target": display_name,
                         "xpath": old_item["xpath"],
                         "message": f"'{display_name}' elementinin bir instance'ı kaldırıldı.",
+                        "human_readable": get_human_readable(filename, tag_name, "removed")
                     })
                     
     # Sort order: added, modified, removed
@@ -182,7 +221,7 @@ def run_analysis(old_data: dict, new_data: dict):
                 "diff": []
             })
         else:
-            diff = compare_files(old_files[file_path], new_files[file_path])
+            diff = compare_files(old_files[file_path], new_files[file_path], file_path)
             if diff:
                 results.append({
                     "file": file_path,

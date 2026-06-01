@@ -51,6 +51,17 @@ def sanitize_ubl_xml(xml_content: bytes) -> bytes:
                         elem.text = "1111111111"
                     else:
                         elem.text = "1111111111" # default mask
+            
+            # Remove Digital Signatures to anonymize company sign
+            elif local_name == "Signature":
+                parent = elem.getparent()
+                if parent is not None:
+                    parent.remove(elem)
+            
+            # Clear Embedded Binaries (Logos, attached PDFs) with a 1x1 transparent GIF
+            elif local_name == "EmbeddedDocumentBinaryObject":
+                if elem.text:
+                    elem.text = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                 
         # Convert back to bytes
         # XML declaration is preserved if we write it out. 

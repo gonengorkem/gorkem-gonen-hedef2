@@ -8,3 +8,5 @@ langchain-text-splitters
 langchain-google-genai 
 chromadb 
 pypdf
+docling
+langchain-docling

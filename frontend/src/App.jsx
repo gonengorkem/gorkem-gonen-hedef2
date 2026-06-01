@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Upload, FileArchive, CheckCircle2, AlertCircle, XCircle, ChevronDown, ChevronRight, Activity, Cpu, Download, MessageSquare, Send, BookOpen, Sun, Moon, Edit2, FileCode, Code2, ShieldCheck } from 'lucide-react';
+import { Upload, FileArchive, CheckCircle2, AlertCircle, XCircle, ChevronDown, ChevronRight, Activity, Cpu, Download, MessageSquare, Send, BookOpen, Sun, Moon, Edit2, FileCode, Code2, ShieldCheck, Search, Palette, Box, ShieldAlert } from 'lucide-react';
 
 function ChatInputBox({ onSend, loading }) {
   const [input, setInput] = useState('');
@@ -56,11 +56,59 @@ function App() {
   const [sanResult, setSanResult] = useState(null);
   const [sanError, setSanError] = useState(null);
 
+  const [xrayResults, setXrayResults] = useState(null);
+  const [xrayLoading, setXrayLoading] = useState(false);
+  const [xraySelectedText, setXraySelectedText] = useState("");
+
+  const findXPathInXml = async (searchText) => {
+      if (!sanResult || !sanResult.xml_base64) return;
+      setXrayLoading(true);
+      setXraySelectedText(searchText);
+      
+      const formData = new FormData();
+      formData.append('xml_base64', sanResult.xml_base64);
+      formData.append('search_text', searchText);
+      
+      try {
+          const response = await axios.post('http://localhost:8000/api/xray', formData);
+          if (response.data.status === 'success') {
+              setXrayResults(response.data.data);
+          } else {
+              setXrayResults([]);
+          }
+      } catch (err) {
+          console.error("X-Ray Error", err);
+          setXrayResults([]);
+      } finally {
+          setXrayLoading(false);
+      }
+  };
+
+  const handleIframeLoad = (e) => {
+    const iframe = e.target;
+    if (iframe.contentWindow) {
+       iframe.contentWindow.document.addEventListener('mouseup', () => {
+          const selection = iframe.contentWindow.getSelection();
+          if (selection && selection.toString().trim()) {
+             const selectedText = selection.toString().trim();
+             if (selectedText.length > 0 && selectedText.length < 200) {
+                 findXPathInXml(selectedText);
+             }
+          }
+       });
+    }
+  };
+
   const [activeTab, setActiveTab] = useState('diff'); // 'diff', 'scenarios' or 'chat'
   const [activeMainTab, setActiveMainTab] = useState('analyzer');
   const [collapsedFiles, setCollapsedFiles] = useState({});
   const [chatMessages, setChatMessages] = useState([{role: 'bot', text: 'Merhaba! GİB kılavuzları ve e-Dönüşüm kuralları hakkında bana her şeyi sorabilirsin.'}]);
   const [chatLoading, setChatLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+  
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, chatLoading]);
   const [pdfUploadLoading, setPdfUploadLoading] = useState(false);
   const [pdfFile, setPdfFile] = useState(null);
   
@@ -604,6 +652,21 @@ function App() {
                                   
                                   {!isCollapsed && (
                                      <div className="p-5 space-y-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+                                       <div className={`p-4 rounded-xl flex items-center gap-3 border ${file.file.endsWith('.xslt') ? 'bg-fuchsia-50 dark:bg-fuchsia-900/20 border-fuchsia-200 dark:border-fuchsia-800 text-fuchsia-800 dark:text-fuchsia-200' : file.file.endsWith('.xsd') ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200' : file.file.endsWith('.sch') ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200' : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 text-slate-800 dark:text-slate-200'}`}>
+                                          {file.file.endsWith('.xslt') && <Palette className="w-8 h-8 shrink-0" />}
+                                          {file.file.endsWith('.xsd') && <Box className="w-8 h-8 shrink-0" />}
+                                          {file.file.endsWith('.sch') && <ShieldAlert className="w-8 h-8 shrink-0" />}
+                                          <div>
+                                              <p className="font-bold">
+                                                  {file.file.endsWith('.xslt') ? 'GÖRSEL TASARIM DEĞİŞİKLİĞİ' : file.file.endsWith('.xsd') ? 'YAPI (İSKELET) DEĞİŞİKLİĞİ' : file.file.endsWith('.sch') ? 'ŞEMATRON (KURAL) DEĞİŞİKLİĞİ' : 'DİĞER DEĞİŞİKLİKLER'}
+                                              </p>
+                                              <p className="text-sm mt-1 opacity-90">
+                                                  {file.file.endsWith('.xslt') ? 'Bu dosyadaki değişiklikler faturanın PDF/HTML görünümünü etkiler. Zirve\'den gönderilen faturanın XML verisini bozmaz, sadece görseli etkiler.' : 
+                                                   file.file.endsWith('.xsd') ? 'Bu dosya faturanın iskeletini etkiler. Zirve\'den giden faturada yeni bir alan (etiket) zorunlu kılınmış veya kaldırılmış olabilir. Kritik test gerektirir!' : 
+                                                   file.file.endsWith('.sch') ? 'Bu değişiklikler faturanın GİB portali kontrollerini etkiler. Zirve\'den giden XML aynı kalsa bile, portale belgeyi reddecek veya uyarı verecek yeni bir kural eklenmiş olabilir.' : 'Standart bir paket dosyası güncellendi.'}
+                                              </p>
+                                          </div>
+                                       </div>
                                        {file.diff.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-lg">Ana dosya eklendi veya kaldırıldı. (Kapsayıcı değişiklik)</p>}
                                 {file.diff.map((diffItem, dIdx) => (
                                    <div key={dIdx} className={`p-4 rounded-xl text-sm border ${
@@ -617,7 +680,8 @@ function App() {
                                         {diffItem.type.includes('modified') && <div className="w-2 h-2 rounded-full bg-amber-500"></div>}
                                         <p className="font-bold text-base">{diffItem.target}</p>
                                       </div>
-                                      <p className="text-slate-700 dark:text-slate-300 ml-4 font-medium">{diffItem.message}</p>
+                                      <p className="text-slate-800 dark:text-slate-200 ml-4 font-semibold text-base mb-1">{diffItem.human_readable || diffItem.message}</p>
+                                      <p className="text-slate-500 dark:text-slate-400 ml-4 text-xs">Teknik Log: {diffItem.message}</p>
                                       
                                       {diffItem.xpath && (
                                         <details className="mt-3 ml-4">
@@ -874,11 +938,49 @@ function App() {
                        <FileCode className="w-4 h-4"/> Maskelenmiş Belge Önizlemesi (XSLT Render)
                     </div>
                     {sanResult.html_preview && !sanResult.html_preview.includes('Önizleme Oluşturulamadı') ? (
-                        <iframe 
-                           srcDoc={sanResult.html_preview}
-                           className="w-full h-[600px] border-none bg-white"
-                           title="XSLT Preview"
-                        />
+                        <>
+                         <iframe 
+                            srcDoc={sanResult.html_preview}
+                            onLoad={handleIframeLoad}
+                            className="w-full h-[600px] border-none bg-white"
+                            title="XSLT Preview"
+                         />
+                         
+                         {/* X-RAY PANEL */}
+                         <div className="bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4">
+                            <h4 className="text-amber-700 dark:text-amber-500 font-bold flex items-center gap-2 mb-3">
+                               <Search className="w-5 h-5"/> Fatura Röntgeni (X-Ray)
+                            </h4>
+                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+                               Yukarıdaki fatura görselinden herhangi bir metni veya rakamı seçerek arka plandaki XML yolunu (XPath) görebilirsiniz.
+                            </p>
+                            
+                            {xrayLoading ? (
+                               <div className="flex items-center gap-2 text-indigo-600 font-semibold p-4 bg-indigo-50 rounded-xl">
+                                  <svg className="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                  "{xraySelectedText}" XML içinde aranıyor...
+                               </div>
+                            ) : xrayResults && xrayResults.length > 0 ? (
+                               <div className="space-y-2 max-h-48 overflow-y-auto">
+                                  {xrayResults.map((res, i) => (
+                                     <div key={i} className="p-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm">
+                                        <div className="flex items-center gap-2 mb-1">
+                                           <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-bold">Eşleşen Değer:</span>
+                                           <span className="font-semibold">{res.value}</span>
+                                        </div>
+                                        <div className="font-mono text-xs text-slate-600 dark:text-slate-400 break-all bg-slate-100 dark:bg-slate-900 p-2 rounded">
+                                           {res.xpath}
+                                        </div>
+                                     </div>
+                                  ))}
+                               </div>
+                            ) : xrayResults && xrayResults.length === 0 ? (
+                               <div className="p-4 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-xl text-sm">
+                                  "{xraySelectedText}" için XML'de birebir eşleşme bulunamadı. (Değer XSLT tarafından formül ile üretilmiş veya sabit bir metin olabilir.)
+                               </div>
+                            ) : null}
+                         </div>
+                        </>
                     ) : (
                         <div className="p-8 text-center text-slate-500 bg-slate-50 dark:bg-slate-950 h-48 flex items-center justify-center">
                            <div>
@@ -986,11 +1088,20 @@ function App() {
                             <div className={`max-w-[85%] rounded-2xl p-4 text-sm shadow-sm ${
                                msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 rounded-bl-none border border-slate-200 dark:border-slate-800'
                             }`}>
-                               <div style={{whiteSpace: 'pre-wrap', lineHeight: '1.6'}}>{msg.text}</div>
+                               <div style={{whiteSpace: 'pre-wrap', lineHeight: '1.6'}}>
+                                  {msg.text === '' && msg.role === 'bot' ? (
+                                     <span className="text-slate-500 dark:text-slate-400 italic flex items-center gap-2 font-medium">
+                                        <Search className="w-4 h-4 animate-pulse text-indigo-500" />
+                                        Mevzuatı Kontrol Ediyorum...
+                                     </span>
+                                  ) : (
+                                     msg.text
+                                  )}
+                               </div>
                             </div>
                          </div>
                       ))}
-                      {chatLoading && (
+                      {chatLoading && (!chatMessages.length || chatMessages[chatMessages.length - 1].text !== '') && (
                          <div className="flex justify-start">
                             <div className="bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 rounded-2xl rounded-bl-none p-4 text-sm max-w-[80%] border border-slate-200 dark:border-slate-800 flex items-center gap-2 shadow-sm">
                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
@@ -999,6 +1110,7 @@ function App() {
                             </div>
                          </div>
                       )}
+                      <div ref={messagesEndRef} />
                    </div>
                    
                    <ChatInputBox onSend={handleSendChatStream} loading={chatLoading} />

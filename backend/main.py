@@ -10,6 +10,7 @@ from core.scenario_generator import generate_scenarios
 from core.schematron_engine import validate_xml_with_schematron
 from core.sanitizer_engine import sanitize_ubl_xml
 from core.xslt_renderer import render_ubl_to_html
+from core.xray_engine import find_xpaths_in_ubl
 import base64
 from typing import Optional
 
@@ -288,6 +289,14 @@ async def api_sanitize_xml(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Anonimleştirme işlemi sırasında beklenmedik hata oluştu: {str(e)}")
+
+@app.post("/api/xray")
+async def api_xray(xml_base64: str = Form(...), search_text: str = Form(...)):
+    try:
+        results = find_xpaths_in_ubl(xml_base64, search_text)
+        return {"status": "success", "data": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

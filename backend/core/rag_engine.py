@@ -1,25 +1,56 @@
 import os
 import time
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_docling import DoclingLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores.utils import filter_complex_metadata
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+import chromadb
 
 load_dotenv()
 
-CHROMA_PATH = "chroma_db"
+CHROMA_PATH = "chroma_db_new"
+
+_global_embeddings = None
 
 def get_embeddings():
-    return GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    global _global_embeddings
+    if _global_embeddings is None:
+        _global_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    return _global_embeddings
+
+_global_db = None
+
+def get_db():
+    global _global_db
+    if _global_db is None:
+        _global_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings(), collection_name="gib_docs")
+    return _global_db
 
 def ingest_document(file_path: str):
     """Loads a PDF document and adds it to the Chroma vector database."""
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
-    loader = PyPDFLoader(file_path)
-    pages = loader.load_and_split()
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = False
+    pipeline_options.do_table_structure = False
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=pipeline_options,
+                backend=PyPdfiumDocumentBackend
+            )
+        }
+    )
+    loader = DoclingLoader(file_path, converter=converter)
+    pages = loader.load()
     
     # Bölütleme (Chunking) ayarları: Belgeleri LLM'in anlayacağı kısalıkta dilimlere ayırır.
     text_splitter = RecursiveCharacterTextSplitter(
@@ -28,9 +59,10 @@ def ingest_document(file_path: str):
         length_function=len
     )
     chunks = text_splitter.split_documents(pages)
+    chunks = filter_complex_metadata(chunks)
     
-    # Kurallara göre Chroma Vektör Veritabanını oluştur veya yükle
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings())
+    # Standalone Chroma yerine Local Persistent DB Kullan
+    db = get_db()
     
     # Ücretsiz Gemini API limitleri (Dakikada 100 İstek) için chunk'ları yavaş yavaş gönder
     batch_size = 80
@@ -47,7 +79,7 @@ def ingest_document(file_path: str):
                 raise e
                 
         if i + batch_size < len(chunks):
-            time.sleep(60) # Her 80 chunk grubundan sonra API'nin sıfırlanması için 1 dk bekle
+            pass # Sleep removed
             
     
     return len(chunks)
@@ -70,10 +102,23 @@ def ingest_directory(dir_path: str):
         length_function=len
     )
     
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = False
+    pipeline_options.do_table_structure = False
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=pipeline_options,
+                backend=PyPdfiumDocumentBackend
+            )
+        }
+    )
+
     for pdf in pdf_files:
         try:
-            loader = PyPDFLoader(pdf)
-            pages = loader.load_and_split()
+            print(f"Docling ile okunuyor: {pdf}")
+            loader = DoclingLoader(pdf, converter=converter)
+            pages = loader.load()
             chunks = text_splitter.split_documents(pages)
             all_chunks.extend(chunks)
         except Exception as e:
@@ -82,8 +127,10 @@ def ingest_directory(dir_path: str):
     if not all_chunks:
          raise ValueError("PDF dosyaları okunurken içeriği sıfır veya hata oluştu.")
          
-    # Chroma Vektör Veritabanına topluca ekle
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings())
+    all_chunks = filter_complex_metadata(all_chunks)
+         
+    # Chroma Persistent Sunucusuna Bağlan
+    db = get_db()
     
     batch_size = 80
     for i in range(0, len(all_chunks), batch_size):
@@ -99,7 +146,7 @@ def ingest_directory(dir_path: str):
                 raise e
                 
         if i + batch_size < len(all_chunks):
-            time.sleep(60) # Kota sıfırlanması için 1 dk bekle
+            pass # Sleep removed
             
     
     return len(all_chunks)
@@ -109,7 +156,7 @@ def query_rag(query_text: str):
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings())
+    db = get_db()
     
     # Vektör veri tabanında en alakalı 4 bölümü (chunk) bul
     results = db.similarity_search_with_relevance_scores(query_text, k=4)
@@ -148,7 +195,7 @@ async def query_rag_stream(query_text: str):
         yield "Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin."
         return
         
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings())
+    db = get_db()
     
     results = db.similarity_search_with_relevance_scores(query_text, k=4)
     

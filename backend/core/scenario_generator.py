@@ -29,40 +29,39 @@ def generate_scenarios(diff_results: list):
         for change in file_diff.get("diff", []):
             ctype = change["type"]
             target = change["target"]
+            human_text = change.get("human_readable", "Teknik bir değişiklik yapıldı.")
             
             if ctype == "added":
                 scenarios.append({
                     "target": target,
                     "file": filename,
                     "type": "YENİ ALAN (KURAL) EKLENDİ",
-                    "positive": f"'{target}' alanının uygun formata göre doldurulup gönderilebildiği doğrulanmalı.",
-                    "negative": f"'{target}' alanı eksik, formatı hatalı veya sınırları dışındaysa sistemin kabul etmemesi kontrol edilmeli."
+                    "positive": f"Sistemin yeni kurala uygun davrandığı doğrulanmalı. (Açıklama: {human_text})",
+                    "negative": f"Bu yeni alan/kural ihlal edildiğinde GİB şemasına uygun hata alındığı görülmeli."
                 })
             elif ctype == "attribute_added":
-                message = change.get("message", "")
                 scenarios.append({
                     "target": target,
                     "file": filename,
-                    "type": "YENİ ÖZELLİK (ATTRIBUTE) EKLENDİ",
-                    "positive": f"'{target}' alanının eklenen yeni özelliğe ({message.replace(f'{target} elementine ', '')}) uygun olarak doldurulup geçebildiği doğrulanmalı.",
-                    "negative": "Eklenen bu özelliğe zıt/uyumsuz bir değer gönderildiğinde şematron/şema hatası fırlatıldığı görülmeli."
+                    "type": "YENİ ÖZELLİK EKLENDİ",
+                    "positive": f"Eklenen özelliğin iş kurallarına uygun doldurulduğunda kabul edildiği doğrulanmalı. (Açıklama: {human_text})",
+                    "negative": "Bu yeni özelliğe zıt veya geçersiz bir format gönderildiğinde şematron/şema hatası fırlatıldığı görülmeli."
                 })
             elif ctype == "modified":
-                message = change.get("message", "")
                 scenarios.append({
                     "target": target,
                     "file": filename,
                     "type": "KURAL / ÖZELLİK DEĞİŞTİRİLDİ",
-                    "positive": f"Yeni kural setine göre ('{target}' alanı için güncellenmiş değer vb.) belgenin hatasız geçişi doğrulanmalı.",
-                    "negative": f"Eski kurala göre veri gönderimi yapıldığında sistemin (GİB standartlarına göre) artık hata üretip üretmediği kontrol edilmeli."
+                    "positive": f"Yeni kural setine göre belgenin başarıyla oluşturulduğu doğrulanmalı. (Açıklama: {human_text})",
+                    "negative": f"Eski kurala göre veri gönderimi yapıldığında sistemin (GİB standartlarına göre) artık uyarı veya hata üretip üretmediği kontrol edilmeli."
                 })
             elif ctype == "removed":
                  scenarios.append({
                     "target": target,
                     "file": filename,
                     "type": "ALAN / KURAL KALDIRILDI",
-                    "positive": f"'{target}' alanı gönderilmediğinde belgenin yine de başarıyla GİB'e iletilebildiği/validasyonlardan geçtiği kontrol edilmeli.",
-                    "negative": f"Artık geçersiz olan '{target}' alanı belgeye eklenirse sistemin kabul edip etmediği, ediyorsa da zararsız aktarıp aktarmadığı kontrol edilmeli."
+                    "positive": f"Kaldırılan kurala/alana dair bir veri gönderilmediğinde belgenin yine de başarıyla GİB'e iletilebildiği/validasyonlardan geçtiği kontrol edilmeli. (Açıklama: {human_text})",
+                    "negative": f"Artık geçersiz olan veya kaldırılan bir kural/alan belgeye zorla eklenirse sistemin bunu filtreleyip filtrelemediği veya GİB'in reddedip reddetmediği kontrol edilmeli."
                 })
                 
     return scenarios
