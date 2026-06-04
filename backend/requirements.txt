@@ -10,3 +10,6 @@ chromadb
 pypdf
 docling
 langchain-docling
+redis
+boto3
+

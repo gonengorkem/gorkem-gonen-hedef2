@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - REDIS_HOST=redis
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+    volumes:
+      - ./backend/chroma_db_local:/app/chroma_db_local
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  redis:
+    image: redis:alpine
+    container_name: gib_redis_cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  chromadb-admin:
+    image: fengzhichao/chromadb-admin
+    container_name: gib_vector_admin
+    ports:
+      - "3001:3001"
+    environment:
+      - CHROMA_SERVER_HOST=backend
+      - CHROMA_SERVER_PORT=8000
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  redis_data:

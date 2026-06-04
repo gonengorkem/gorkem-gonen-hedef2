@@ -264,6 +264,8 @@ async def api_sanitize_xml(file: UploadFile = File(...)):
         
     try:
         content = await file.read()
+        with open("debug_uploaded.xml", "wb") as dbg:
+            dbg.write(content)
         sanitized_content = sanitize_ubl_xml(content)
         
         # Try rendering to HTML (it may fail if XSLT is not embedded, we don't block XML generation though)
@@ -289,6 +291,28 @@ async def api_sanitize_xml(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Anonimleştirme işlemi sırasında beklenmedik hata oluştu: {str(e)}")
+
+@app.post("/api/render")
+async def api_render_xml(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.endswith('.xml'):
+        raise HTTPException(status_code=400, detail="Lütfen geçerli bir .xml dosyası yükleyin.")
+        
+    try:
+        content = await file.read()
+        html_preview = render_ubl_to_html(content)
+        xml_b64 = base64.b64encode(content).decode("utf-8")
+        
+        return {
+             "status": "success",
+             "message": "Fatura görseli başarıyla oluşturuldu.",
+             "data": {
+                 "xml_base64": xml_b64,
+                 "html_preview": html_preview,
+                 "filename": file.filename
+             }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fatura görselleştirilemedi: {str(e)}")
 
 @app.post("/api/xray")
 async def api_xray(xml_base64: str = Form(...), search_text: str = Form(...)):

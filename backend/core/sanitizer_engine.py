@@ -1,5 +1,7 @@
 from lxml import etree
 import copy
+import base64
+import re
 
 def sanitize_ubl_xml(xml_content: bytes) -> bytes:
     """
@@ -29,6 +31,7 @@ def sanitize_ubl_xml(xml_content: bytes) -> bytes:
             "ElectronicMail": "test@test.com",
         }
         
+        nodes_to_remove = []
         for elem in root.iter():
             # Extract local name (ignore namespace)
             local_name = etree.QName(elem).localname
@@ -54,15 +57,43 @@ def sanitize_ubl_xml(xml_content: bytes) -> bytes:
             
             # Remove Digital Signatures to anonymize company sign
             elif local_name == "Signature":
-                parent = elem.getparent()
-                if parent is not None:
-                    parent.remove(elem)
+                nodes_to_remove.append(elem)
             
             # Clear Embedded Binaries (Logos, attached PDFs) with a 1x1 transparent GIF
+            # but preserve the XSLT stylesheet for rendering, masking any embedded images inside it
             elif local_name == "EmbeddedDocumentBinaryObject":
                 if elem.text:
-                    elem.text = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                    try:
+                        decoded = base64.b64decode(elem.text.strip())
+                        if b"<xsl:stylesheet" in decoded or b"<xsl:transform" in decoded:
+                            try:
+                                xslt_root = etree.fromstring(decoded)
+                                b64_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\\n\\r\\t ")
+                                for node in xslt_root.iter():
+                                    if node.text and len(node.text) > 200:
+                                        if not set(node.text) - b64_chars:
+                                            node.text = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                                    for attr_name, attr_value in node.attrib.items():
+                                        if len(attr_value) > 200 and "base64," in attr_value:
+                                            prefix_idx = attr_value.find("base64,") + 7
+                                            node.attrib[attr_name] = attr_value[:prefix_idx] + "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                                sanitized_xslt = etree.tostring(xslt_root, encoding='utf-8')
+                            except Exception:
+                                pattern = b"(data:image/[a-zA-Z0-9+-]+;base64,)[a-zA-Z0-9+/=\\r\\n\\t ]+"
+                                replacement = b"\\g<1>R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                                sanitized_xslt = re.sub(pattern, replacement, decoded, flags=re.IGNORECASE)
+                            elem.text = base64.b64encode(sanitized_xslt).decode("utf-8")
+                        else:
+                            elem.text = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                    except Exception:
+                        # If base64 decoding fails, clear it anyway
+                        elem.text = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                 
+        for elem in nodes_to_remove:
+            parent = elem.getparent()
+            if parent is not None:
+                parent.remove(elem)
+
         # Convert back to bytes
         # XML declaration is preserved if we write it out. 
         # But etree.tostring doesn't automatically insert <?xml version="1.0" encoding="UTF-8"?> unless specified

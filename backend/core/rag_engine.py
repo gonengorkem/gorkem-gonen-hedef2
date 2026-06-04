@@ -15,7 +15,21 @@ import chromadb
 
 load_dotenv()
 
-CHROMA_PATH = "chroma_db_new"
+def safe_print(msg: str):
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        try:
+            import sys
+            encoding = sys.stdout.encoding or 'utf-8'
+            print(msg.encode(encoding, errors='replace').decode(encoding))
+        except Exception:
+            try:
+                print(msg.encode('ascii', errors='replace').decode('ascii'))
+            except Exception:
+                pass
+
+CHROMA_PATH = "chroma_db_local"
 
 _global_embeddings = None
 
@@ -38,18 +52,8 @@ def ingest_document(file_path: str):
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = False
-    pipeline_options.do_table_structure = False
-    converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_options=pipeline_options,
-                backend=PyPdfiumDocumentBackend
-            )
-        }
-    )
-    loader = DoclingLoader(file_path, converter=converter)
+    from langchain_community.document_loaders import PyPDFLoader
+    loader = PyPDFLoader(file_path)
     pages = loader.load()
     
     # Bölütleme (Chunking) ayarları: Belgeleri LLM'in anlayacağı kısalıkta dilimlere ayırır.
@@ -72,7 +76,7 @@ def ingest_document(file_path: str):
             db.add_documents(batch)
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"API Limitine ulaşıldı. 60 saniye bekleniyor... ({i}/{len(chunks)})")
+                safe_print(f"API Limitine ulaşıldı. 60 saniye bekleniyor... ({i}/{len(chunks)})")
                 time.sleep(60)
                 db.add_documents(batch)
             else:
@@ -102,27 +106,17 @@ def ingest_directory(dir_path: str):
         length_function=len
     )
     
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = False
-    pipeline_options.do_table_structure = False
-    converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_options=pipeline_options,
-                backend=PyPdfiumDocumentBackend
-            )
-        }
-    )
+    from langchain_community.document_loaders import PyPDFLoader
 
     for pdf in pdf_files:
         try:
-            print(f"Docling ile okunuyor: {pdf}")
-            loader = DoclingLoader(pdf, converter=converter)
+            safe_print(f"PyPDF ile okunuyor: {pdf}")
+            loader = PyPDFLoader(pdf)
             pages = loader.load()
             chunks = text_splitter.split_documents(pages)
             all_chunks.extend(chunks)
         except Exception as e:
-            print(f"Hata oluşan PDF dosyası atlanıyor: {pdf} - Error: {str(e)}")
+            safe_print(f"Hata oluşan PDF dosyası atlanıyor: {pdf} - Error: {str(e)}")
             
     if not all_chunks:
          raise ValueError("PDF dosyaları okunurken içeriği sıfır veya hata oluştu.")
@@ -139,7 +133,7 @@ def ingest_directory(dir_path: str):
             db.add_documents(batch)
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"API Limitine ulaşıldı. 60 saniye bekleniyor... ({i}/{len(all_chunks)})")
+                safe_print(f"API Limitine ulaşıldı. 60 saniye bekleniyor... ({i}/{len(all_chunks)})")
                 time.sleep(60)
                 db.add_documents(batch)
             else:
@@ -151,22 +145,103 @@ def ingest_directory(dir_path: str):
     
     return len(all_chunks)
 
+def normalize_turkish(text: str) -> str:
+    replacements = {
+        'ı': 'i', 'ş': 's', 'ğ': 'g', 'ü': 'u', 'ö': 'o', 'ç': 'c',
+        'ı': 'i', 'ş': 's', 'ğ': 'g', 'ü': 'u', 'ö': 'o', 'ç': 'c',
+        'I': 'i', 'Ş': 's', 'Ğ': 'g', 'Ü': 'u', 'Ö': 'o', 'Ç': 'c'
+    }
+    text = text.lower()
+    for tr, eng in replacements.items():
+        text = text.replace(tr, eng)
+    return text
+
+def keyword_search(docs, query_text: str, k: int = 5):
+    query_norm = normalize_turkish(query_text)
+    stopwords = {"ve", "veya", "ile", "bir", "bu", "da", "de", "icin", "mu", "mudur", "dur", "en", "ise", "altinda"}
+    query_words = [w for w in query_norm.replace("-", " ").split() if w not in stopwords and len(w) > 1]
+    
+    if not query_words:
+        return []
+        
+    scored_docs = []
+    for doc in docs:
+        content_norm = normalize_turkish(doc.page_content)
+        score = 0
+        for word in query_words:
+            count = content_norm.count(word)
+            if count > 0:
+                boundary_count = content_norm.count(f" {word} ") + content_norm.count(f"\n{word} ") + content_norm.count(f" {word}\n")
+                score += (count * 1.0) + (boundary_count * 2.0)
+        if score > 0:
+            scored_docs.append((doc, score))
+            
+    scored_docs.sort(key=lambda x: x[1], reverse=True)
+    return [doc for doc, score in scored_docs[:k]]
+
+def get_hybrid_context(query_text: str):
+    from langchain_core.documents import Document
+    db = get_db()
+    
+    # 1. Vektör Benzerlik Araması
+    try:
+        vector_results = db.similarity_search(query_text, k=5)
+    except Exception as e:
+        safe_print(f"Vector search failed: {e}")
+        vector_results = []
+        
+    # 2. Anahtar Kelime Araması (Keyword Search)
+    try:
+        all_data = db._collection.get()
+        documents = []
+        for idx, doc in enumerate(all_data['documents']):
+            metadata = all_data['metadatas'][idx]
+            documents.append(Document(page_content=doc, metadata=metadata))
+        keyword_results = keyword_search(documents, query_text, k=5)
+    except Exception as e:
+        safe_print(f"Keyword search failed: {e}")
+        keyword_results = []
+        
+    # 3. İki arama sonucunu birleştirme ve mükerrerleri silme
+    seen = set()
+    merged = []
+    
+    # Sırayla bir anahtar kelime sonucu, bir vektör sonucu ekleyelim (özellikle anahtar kelimeleri öne çıkarır)
+    for kw_doc, vec_doc in zip(keyword_results, vector_results + [None] * len(keyword_results)):
+        if kw_doc:
+            snippet = kw_doc.page_content[:150]
+            if snippet not in seen:
+                seen.add(snippet)
+                merged.append(kw_doc)
+        if vec_doc:
+            snippet = vec_doc.page_content[:150]
+            if snippet not in seen:
+                seen.add(snippet)
+                merged.append(vec_doc)
+                
+    # Kalanları ekle
+    for doc in keyword_results + vector_results:
+        if doc:
+            snippet = doc.page_content[:150]
+            if snippet not in seen:
+                seen.add(snippet)
+                merged.append(doc)
+            
+    return merged[:8]
+
 def query_rag(query_text: str):
     """Queries the Chroma vector database and generates an answer using Gemini."""
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
-    db = get_db()
-    
-    # Vektör veri tabanında en alakalı 4 bölümü (chunk) bul
-    results = db.similarity_search_with_relevance_scores(query_text, k=4)
+    results = get_hybrid_context(query_text)
     
     if len(results) == 0:
         context_text = ""
         sources = []
     else:
-        context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
-        sources = list(set([os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak")) for doc, _score in results]))
+        context_text = "\n\n---\n\n".join([doc.page_content for doc in results])
+        sources = list(set([os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak")) for doc in results]))
         
     prompt_template = f"""
     Sen, test uzmanları için geliştirilmiş "GİB Paket Analizörü" uygulaması içinde çalışan uzman bir e-Dönüşüm asistanısın.
@@ -195,14 +270,12 @@ async def query_rag_stream(query_text: str):
         yield "Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin."
         return
         
-    db = get_db()
-    
-    results = db.similarity_search_with_relevance_scores(query_text, k=4)
+    results = get_hybrid_context(query_text)
     
     if len(results) == 0:
         context_text = ""
     else:
-        context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
+        context_text = "\n\n---\n\n".join([doc.page_content for doc in results])
         
     prompt_template = f"""
     Sen, test uzmanları için geliştirilmiş "GİB Paket Analizörü" uygulaması içinde çalışan uzman bir e-Dönüşüm asistanısın.

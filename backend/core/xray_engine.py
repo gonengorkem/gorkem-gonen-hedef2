@@ -89,14 +89,15 @@ def find_xpaths_in_ubl(xml_base64: str, search_text: str) -> list:
                     
                     results.append({
                         "xpath": xpath_str,
-                        "value": text
+                        "value": text,
+                        "line": elem.sourceline or 1
                     })
                     
         # Remove exact duplicates
         unique_results = []
         seen = set()
         for r in results:
-            identifier = r["xpath"] + r["value"]
+            identifier = r["xpath"] + r["value"] + str(r["line"])
             if identifier not in seen:
                 seen.add(identifier)
                 unique_results.append(r)

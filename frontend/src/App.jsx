@@ -56,23 +56,106 @@ function App() {
   const [sanResult, setSanResult] = useState(null);
   const [sanError, setSanError] = useState(null);
 
+  // Röntgen (X-Ray) States
+  const [xrayFile, setXrayFile] = useState(null);
+  const [xrayFileLoading, setXrayFileLoading] = useState(false);
+  const [xrayResult, setXrayResult] = useState(null);
+  const [xrayError, setXrayError] = useState(null);
   const [xrayResults, setXrayResults] = useState(null);
   const [xrayLoading, setXrayLoading] = useState(false);
   const [xraySelectedText, setXraySelectedText] = useState("");
+  const [copiedIndex, setCopiedIndex] = useState(null);
+  const [highlightedLine, setHighlightedLine] = useState(null);
+  const [xmlText, setXmlText] = useState("");
+  const [leftWidth, setLeftWidth] = useState(50); // Balanced 50/50 split by default!
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef(null);
 
-  const findXPathInXml = async (searchText) => {
-      if (!sanResult || !sanResult.xml_base64) return;
+  const startResizing = (mouseDownEvent) => {
+    setIsDragging(true);
+    mouseDownEvent.preventDefault();
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e) => {
+      if (!containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const relativeX = e.clientX - containerRect.left;
+      let percentage = (relativeX / containerRect.width) * 100;
+      
+      // Boundaries: min 30%, max 70%
+      if (percentage < 30) percentage = 30;
+      if (percentage > 70) percentage = 70;
+      
+      setLeftWidth(percentage);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  useEffect(() => {
+    if (xrayResult && xrayResult.xml_base64) {
+      try {
+        const binaryString = atob(xrayResult.xml_base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const decoded = new TextDecoder('utf-8').decode(bytes);
+        setXmlText(decoded);
+        setHighlightedLine(null);
+      } catch (err) {
+        console.error("Error decoding XML base64", err);
+        try {
+          setXmlText(atob(xrayResult.xml_base64));
+        } catch (e) {
+          setXmlText("");
+        }
+        setHighlightedLine(null);
+      }
+    } else {
+      setXmlText("");
+      setHighlightedLine(null);
+    }
+  }, [xrayResult]);
+
+  const findXPathInXml = async (searchText, targetXmlBase64) => {
+      if (!targetXmlBase64) return;
       setXrayLoading(true);
       setXraySelectedText(searchText);
       
       const formData = new FormData();
-      formData.append('xml_base64', sanResult.xml_base64);
+      formData.append('xml_base64', targetXmlBase64);
       formData.append('search_text', searchText);
       
       try {
           const response = await axios.post('http://localhost:8000/api/xray', formData);
           if (response.data.status === 'success') {
-              setXrayResults(response.data.data);
+              const matchedResults = response.data.data;
+              setXrayResults(matchedResults);
+              
+              if (matchedResults && matchedResults.length > 0) {
+                  const targetLine = matchedResults[0].line;
+                  setHighlightedLine(targetLine);
+                  setTimeout(() => {
+                      const lineElem = document.getElementById(`xml-line-${targetLine}`);
+                      if (lineElem) {
+                          lineElem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }
+                  }, 100);
+              }
           } else {
               setXrayResults([]);
           }
@@ -84,7 +167,7 @@ function App() {
       }
   };
 
-  const handleIframeLoad = (e) => {
+  const handleIframeLoad = (e, targetXmlBase64) => {
     const iframe = e.target;
     if (iframe.contentWindow) {
        iframe.contentWindow.document.addEventListener('mouseup', () => {
@@ -92,10 +175,44 @@ function App() {
           if (selection && selection.toString().trim()) {
              const selectedText = selection.toString().trim();
              if (selectedText.length > 0 && selectedText.length < 200) {
-                 findXPathInXml(selectedText);
+                 findXPathInXml(selectedText, targetXmlBase64);
              }
           }
        });
+    }
+  };
+
+  const handleXrayFileChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setXrayFile(e.target.files[0]);
+      setXrayResult(null);
+      setXrayError(null);
+      setXrayResults(null);
+      setXraySelectedText("");
+    }
+  };
+
+  const handleXrayUpload = async (file) => {
+    const targetFile = file || xrayFile;
+    if (!targetFile) {
+      setXrayError("Lütfen bir XML dosyası yükleyiniz.");
+      return;
+    }
+    setXrayFileLoading(true);
+    setXrayError(null);
+    setXrayResult(null);
+    setXrayResults(null);
+    setXraySelectedText("");
+    const formData = new FormData();
+    formData.append('file', targetFile);
+
+    try {
+      const response = await axios.post('http://localhost:8000/api/render', formData);
+      setXrayResult(response.data.data);
+    } catch (err) {
+      setXrayError(err.response?.data?.detail || "Sunucu ile iletişim hatası veya fatura görselleştirme sorunu.");
+    } finally {
+      setXrayFileLoading(false);
     }
   };
 
@@ -109,9 +226,28 @@ function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatLoading]);
+
   const [pdfUploadLoading, setPdfUploadLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [learningProgress, setLearningProgress] = useState(0);
   const [pdfFile, setPdfFile] = useState(null);
   
+  const [modalConfig, setModalConfig] = useState({
+    isOpen: false,
+    type: 'success', // 'success' or 'error'
+    title: '',
+    message: ''
+  });
+
+  const showPremiumModal = (type, title, message) => {
+    setModalConfig({
+      isOpen: true,
+      type,
+      title,
+      message
+    });
+  };
+
   const [geminiKey, setGeminiKey] = useState('');
   const [keyLoading, setKeyLoading] = useState(false);
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
@@ -208,9 +344,9 @@ function App() {
         fetchSavedSchematrons();
         setSelectedSchFilename(schSchFile.name);
         setSchSchFile(null);
-        alert("Kural sunucuya başarıyla kaydedildi!");
+        showPremiumModal('success', 'Şematron Kaydedildi', 'Özel doğrulama şematron kuralı sunucuya başarıyla yüklendi!');
     } catch(err) {
-        alert("Kayıt sırasında hata: " + err.message);
+        showPremiumModal('error', 'Yükleme Başarısız', 'Şematron dosyası yüklenirken bir hata oluştu: ' + err.message);
     }
   };
 
@@ -296,16 +432,55 @@ function App() {
   const handleIngestPdf = async () => {
     if (!pdfFile) return;
     setPdfUploadLoading(true);
+    setUploadProgress(0);
+    setLearningProgress(1); // Start at 1% immediately to give instant visual feedback
+
     const formData = new FormData();
     formData.append('file', pdfFile);
+
+    // Dynamic interval that increases smoothly and caps at 98%
+    let currentProgress = 1;
+    const progressInterval = setInterval(() => {
+      if (currentProgress < 30) {
+        currentProgress += Math.random() * 5 + 3; // Fast at first (+3-8%)
+      } else if (currentProgress < 70) {
+        currentProgress += Math.random() * 3 + 1; // Moderate (+1-4%)
+      } else if (currentProgress < 95) {
+        currentProgress += Math.random() * 1.5 + 0.5; // Slower (+0.5-2%)
+      } else if (currentProgress < 98) {
+        currentProgress += 0.2; // Crawl near the limit
+      }
+      
+      if (currentProgress > 98) currentProgress = 98;
+      setLearningProgress(Math.floor(currentProgress));
+    }, 450);
+
     try {
-      const resp = await axios.post('http://localhost:8000/api/rag/ingest', formData);
-      alert(resp.data.message);
-      setPdfFile(null);
+      const resp = await axios.post('http://localhost:8000/api/rag/ingest', formData, {
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(percentCompleted);
+        }
+      });
+
+      clearInterval(progressInterval);
+      setLearningProgress(100);
+
+      // Delay slightly to let the user see 100% completion
+      setTimeout(() => {
+        setPdfFile(null);
+        setPdfUploadLoading(false);
+        setUploadProgress(0);
+        setLearningProgress(0);
+        showPremiumModal('success', 'Eğitim Tamamlandı', resp.data.message);
+      }, 500);
+
     } catch (err) {
-      alert(err.response?.data?.detail || "Kılavuz yüklenirken bir hata oluştu.");
-    } finally {
+      clearInterval(progressInterval);
       setPdfUploadLoading(false);
+      setUploadProgress(0);
+      setLearningProgress(0);
+      showPremiumModal('error', 'Hata Oluştu', err.response?.data?.detail || "Kılavuz yüklenirken veya eğitilirken bir hata oluştu. Lütfen bağlantınızı ve API Key bilginizi kontrol edin.");
     }
   };
 
@@ -396,11 +571,11 @@ function App() {
     formData.append('key', geminiKey.trim());
     try {
       const resp = await axios.post('http://localhost:8000/api/settings/apikey', formData);
-      alert(resp.data.message);
       setIsApiKeySaved(true);
       setGeminiKey('');
+      showPremiumModal('success', 'API Anahtarı Aktif', resp.data.message);
     } catch (err) {
-      alert("Hata: " + (err.response?.data?.detail || "API Key kaydedilemedi."));
+      showPremiumModal('error', 'API Anahtarı Kaydedilemedi', err.response?.data?.detail || "API Anahtarı kaydedilirken bir sunucu hatası oluştu.");
     } finally {
       setKeyLoading(false);
     }
@@ -478,7 +653,16 @@ function App() {
           <button 
             onClick={() => setActiveMainTab('sanitizer')} 
             className={`py-4 px-6 font-bold text-sm border-b-2 transition flex items-center gap-2 ${activeMainTab === 'sanitizer' ? 'border-amber-600 text-amber-700 bg-amber-50/50' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
-            <ShieldCheck className="w-5 h-5"/> KVKK Anonimleştirici
+            <ShieldCheck className="w-5 h-5"/> XSLT İşlemleri
+          </button>
+          <button 
+            onClick={() => {
+              setActiveMainTab('xray');
+              setXrayResults(null);
+              setXraySelectedText("");
+            }} 
+            className={`py-4 px-6 font-bold text-sm border-b-2 transition flex items-center gap-2 ${activeMainTab === 'xray' ? 'border-violet-600 text-violet-700 bg-violet-50/50' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
+            <Search className="w-5 h-5"/> Fatura Röntgeni
           </button>
           <button 
             onClick={() => setActiveMainTab('assistant')} 
@@ -488,7 +672,11 @@ function App() {
         </div>
       </div>
 
-      <main className="max-w-6xl mx-auto py-8 px-4">
+      <main className={`w-full py-8 transition-all duration-300 ${
+        activeMainTab === 'xray' && xrayResult 
+        ? 'max-w-[1920px] px-8' 
+        : 'max-w-6xl px-4'
+      } mx-auto`}>
         
         {/* ANALYZER TAB */}
         <div className={activeMainTab === 'analyzer' ? 'block' : 'hidden'}>
@@ -875,7 +1063,7 @@ function App() {
         <div className={activeMainTab === 'sanitizer' ? 'block' : 'hidden'}>
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-sm border border-slate-200 dark:border-slate-800 mb-8 max-w-4xl mx-auto">
             <div className="text-center mb-10">
-              <h2 className="text-2xl font-bold mb-2 text-amber-600 flex justify-center items-center gap-2"><ShieldCheck className="w-8 h-8"/> UBL XML KVKK Anonimleştirici</h2>
+              <h2 className="text-2xl font-bold mb-2 text-amber-600 flex justify-center items-center gap-2"><ShieldCheck className="w-8 h-8"/> UBL XML XSLT İşlemleri</h2>
               <p className="text-slate-500 dark:text-slate-400">Canlı ortamdaki gerçek faturalarınızı ve hassas şirket/müşteri verilerinizi içeren .xml dosyalarını orijinal yapısını ve formatını bozmadan güvenle maskeleyin.</p>
             </div>
 
@@ -938,49 +1126,11 @@ function App() {
                        <FileCode className="w-4 h-4"/> Maskelenmiş Belge Önizlemesi (XSLT Render)
                     </div>
                     {sanResult.html_preview && !sanResult.html_preview.includes('Önizleme Oluşturulamadı') ? (
-                        <>
                          <iframe 
                             srcDoc={sanResult.html_preview}
-                            onLoad={handleIframeLoad}
                             className="w-full h-[600px] border-none bg-white"
                             title="XSLT Preview"
                          />
-                         
-                         {/* X-RAY PANEL */}
-                         <div className="bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4">
-                            <h4 className="text-amber-700 dark:text-amber-500 font-bold flex items-center gap-2 mb-3">
-                               <Search className="w-5 h-5"/> Fatura Röntgeni (X-Ray)
-                            </h4>
-                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                               Yukarıdaki fatura görselinden herhangi bir metni veya rakamı seçerek arka plandaki XML yolunu (XPath) görebilirsiniz.
-                            </p>
-                            
-                            {xrayLoading ? (
-                               <div className="flex items-center gap-2 text-indigo-600 font-semibold p-4 bg-indigo-50 rounded-xl">
-                                  <svg className="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                  "{xraySelectedText}" XML içinde aranıyor...
-                               </div>
-                            ) : xrayResults && xrayResults.length > 0 ? (
-                               <div className="space-y-2 max-h-48 overflow-y-auto">
-                                  {xrayResults.map((res, i) => (
-                                     <div key={i} className="p-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm">
-                                        <div className="flex items-center gap-2 mb-1">
-                                           <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-bold">Eşleşen Değer:</span>
-                                           <span className="font-semibold">{res.value}</span>
-                                        </div>
-                                        <div className="font-mono text-xs text-slate-600 dark:text-slate-400 break-all bg-slate-100 dark:bg-slate-900 p-2 rounded">
-                                           {res.xpath}
-                                        </div>
-                                     </div>
-                                  ))}
-                               </div>
-                            ) : xrayResults && xrayResults.length === 0 ? (
-                               <div className="p-4 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded-xl text-sm">
-                                  "{xraySelectedText}" için XML'de birebir eşleşme bulunamadı. (Değer XSLT tarafından formül ile üretilmiş veya sabit bir metin olabilir.)
-                               </div>
-                            ) : null}
-                         </div>
-                        </>
                     ) : (
                         <div className="p-8 text-center text-slate-500 bg-slate-50 dark:bg-slate-950 h-48 flex items-center justify-center">
                            <div>
@@ -995,6 +1145,234 @@ function App() {
 
           </div>
         </div>
+
+        {/* FATURA RÖNTGENİ (X-RAY) SECTION */}
+        {activeMainTab === 'xray' && (
+          <div className="space-y-6 animate-fadeIn">
+            {!xrayResult ? (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-sm border border-slate-200 dark:border-slate-800 mb-8 max-w-4xl mx-auto">
+                <div className="text-center mb-10">
+                  <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-violet-100 dark:bg-violet-950/50 text-violet-600 dark:text-violet-400 mb-4 animate-bounce">
+                    <Search className="w-8 h-8" />
+                  </div>
+                  <h2 className="text-2xl font-bold mb-2">Fatura Röntgeni (X-Ray)</h2>
+                  <p className="text-slate-500 dark:text-slate-400 max-w-lg mx-auto">
+                    Herhangi bir UBL XML fatura dosyasını yükleyin. Fatura tasarım görseli (XSLT) üzerinden metinleri seçerek arka plandaki XML yolu (XPath) adreslerini anında bulun.
+                  </p>
+                </div>
+
+                <div 
+                  className="border-2 border-dashed border-violet-300 dark:border-violet-800 rounded-2xl p-12 text-center hover:bg-violet-50/50 dark:hover:bg-violet-950/10 hover:border-violet-500 transition-all cursor-pointer bg-white dark:bg-slate-950/30 group" 
+                  onClick={() => document.getElementById('xray-file').click()}
+                >
+                  <input id="xray-file" type="file" accept=".xml" className="hidden" onChange={handleXrayFileChange} />
+                  <FileCode className="w-16 h-16 mx-auto mb-4 text-slate-400 group-hover:text-violet-500 transition-colors" />
+                  
+                  {xrayFile ? (
+                    <div>
+                      <p className="font-bold text-lg text-violet-700 dark:text-violet-400">{xrayFile.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{(xrayFile.size / 1024).toFixed(2)} KB</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-slate-700 dark:text-slate-300 font-semibold mb-1 text-base">Faturayı buraya sürükleyin veya tıklayarak seçin</p>
+                      <p className="text-slate-400 text-xs">Sadece UBL XML formatı desteklenmektedir.</p>
+                    </div>
+                  )}
+                </div>
+
+                {xrayError && (
+                  <div className="bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 p-4 rounded-xl flex items-center gap-3 mt-6">
+                     <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                     <p className="text-sm font-medium">{xrayError}</p>
+                  </div>
+                )}
+
+                <div className="mt-8 flex justify-center">
+                  <button
+                    onClick={() => handleXrayUpload()}
+                    disabled={xrayFileLoading || !xrayFile}
+                    className={`w-full max-w-md py-4 rounded-xl flex items-center justify-center gap-2 font-bold text-lg transition-all ${
+                      xrayFileLoading || !xrayFile 
+                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' 
+                      : 'bg-violet-600 text-white hover:bg-violet-700 hover:shadow-lg shadow-violet-600/30'
+                    }`}
+                  >
+                    {xrayFileLoading ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        Fatura Okunuyor & Görselleştiriliyor...
+                      </>
+                    ) : (
+                      <><Search className="w-5 h-5"/> Faturayı Görselleştir ve Röntgeni Başlat</>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div 
+                ref={containerRef}
+                className="flex gap-4 items-stretch relative"
+                style={{ cursor: isDragging ? 'col-resize' : 'default', userSelect: isDragging ? 'none' : 'auto' }}
+              >
+                {/* LEFT SIDE: PREVIEW */}
+                <div 
+                  className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm flex flex-col shrink-0 animate-fadeIn"
+                  style={{ width: `${leftWidth}%` }}
+                >
+                  <div className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 font-semibold text-sm text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                     <div className="flex items-center gap-2">
+                        <FileCode className="w-5 h-5 text-violet-500"/>
+                        <span className="font-bold">Fatura Görsel Önizlemesi (XSLT Tasarımı)</span>
+                        <span className="bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300 text-xs px-2 py-0.5 rounded-full font-medium ml-2 max-w-[200px] truncate">{xrayResult.filename}</span>
+                     </div>
+                     <button
+                       onClick={() => {
+                         setXrayResult(null);
+                         setXrayFile(null);
+                         setXrayResults(null);
+                         setXraySelectedText("");
+                       }}
+                       className="text-xs text-slate-500 hover:text-red-500 font-bold border border-slate-200 dark:border-slate-800 hover:border-red-200 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 bg-white dark:bg-slate-950"
+                     >
+                       <XCircle className="w-3.5 h-3.5" /> Başka Fatura Yükle
+                     </button>
+                  </div>
+                  
+                  {xrayResult.html_preview ? (
+                     <iframe 
+                        srcDoc={xrayResult.html_preview}
+                        onLoad={(e) => handleIframeLoad(e, xrayResult.xml_base64)}
+                        className="w-full h-[700px] border-none bg-white"
+                        title="XSLT Röntgen Preview"
+                     />
+                  ) : (
+                     <div className="p-12 text-center text-slate-500 bg-slate-50 dark:bg-slate-950 h-[400px] flex items-center justify-center">
+                        <div>
+                           <AlertCircle className="w-12 h-12 mx-auto mb-2 text-slate-400 animate-pulse" />
+                           <p className="font-bold text-lg text-slate-700 dark:text-slate-300 mb-1">Tasarım Bulunamadı</p>
+                           <p className="text-sm">Bu XML faturada gömülü bir XSLT tasarımı tespit edilemedi.</p>
+                        </div>
+                     </div>
+                  )}
+                </div>
+
+                {/* DRAGGABLE RESIZER HANDLE */}
+                <div 
+                  onMouseDown={startResizing}
+                  className={`w-2.5 hover:w-3.5 cursor-col-resize self-stretch flex items-center justify-center transition-all select-none group shrink-0 rounded-full ${
+                    isDragging ? 'bg-violet-600 shadow-lg shadow-violet-600/35 scale-x-125' : 'bg-slate-100 dark:bg-slate-800/80 hover:bg-violet-400 dark:hover:bg-violet-500/80'
+                  }`}
+                  title="Genişliği Ayarlamak İçin Sürükleyin"
+                >
+                  <div className="flex flex-col gap-1 items-center justify-center">
+                    <span className={`w-1 h-1 rounded-full ${isDragging ? 'bg-violet-100' : 'bg-slate-400 group-hover:bg-violet-100'}`}></span>
+                    <span className={`w-1 h-1 rounded-full ${isDragging ? 'bg-violet-100' : 'bg-slate-400 group-hover:bg-violet-100'}`}></span>
+                    <span className={`w-1 h-1 rounded-full ${isDragging ? 'bg-violet-100' : 'bg-slate-400 group-hover:bg-violet-100'}`}></span>
+                  </div>
+                </div>
+
+                {/* RIGHT SIDE: INTERACTIVE XML CODE BROWSER */}
+                <div 
+                  className="flex flex-col border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 shadow-sm p-5 h-[756px] shrink-0"
+                  style={{ width: `${100 - leftWidth}%` }}
+                >
+                  <h3 className="text-md font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center justify-between">
+                     <span className="flex items-center gap-2">
+                        <Code2 className="w-5 h-5 text-violet-500 animate-pulse" />
+                        UBL XML Kaynak Kodu
+                     </span>
+                     <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs px-2.5 py-0.5 rounded-full font-medium">
+                        {xmlText.split('\n').length} satır
+                     </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
+                     Sol taraftaki fatura şablonu üzerinden metin seçin; XML kodunda otomatik olarak ilgili satıra odaklanacaktır.
+                  </p>
+
+                  {/* ACTIVE SELECTIONS & MATCHES NAVIGATION DOCK */}
+                  {xrayResults && xrayResults.length > 0 && (
+                     <div className="bg-violet-50 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-900/50 rounded-xl p-3 mb-4 flex flex-col gap-2 shrink-0">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                           <span className="text-violet-700 dark:text-violet-400">🔍 "{xraySelectedText}" İçin {xrayResults.length} Eşleşme</span>
+                        </div>
+                        <div className="flex flex-col gap-1.5 max-h-32 overflow-y-auto pr-1">
+                           {xrayResults.map((res, i) => {
+                              const isCurrent = highlightedLine === res.line;
+                              return (
+                                 <button
+                                    key={i}
+                                    onClick={() => {
+                                       setHighlightedLine(res.line);
+                                       const lineElem = document.getElementById(`xml-line-${res.line}`);
+                                       if (lineElem) {
+                                          lineElem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                       }
+                                    }}
+                                    className={`text-left text-[11px] p-2 rounded-lg transition-all flex items-center justify-between border ${
+                                       isCurrent 
+                                       ? 'bg-violet-600 text-white font-semibold border-violet-600 shadow-sm shadow-violet-600/30' 
+                                       : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                    }`}
+                                 >
+                                    <div className="flex flex-col flex-1 min-w-0 pr-2">
+                                       <span className="truncate font-mono font-bold leading-tight">{res.xpath.split('/').pop()}</span>
+                                       <span className={`text-[9px] truncate opacity-80 font-mono mt-0.5 ${isCurrent ? 'text-violet-200' : 'text-slate-400'}`}>{res.xpath}</span>
+                                    </div>
+                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                       isCurrent ? 'bg-violet-900 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                                    }`}>Satır {res.line}</span>
+                                 </button>
+                              );
+                           })}
+                        </div>
+                     </div>
+                  )}
+
+                  {/* XML CODE CONTAINER */}
+                  <div className="flex-1 overflow-auto bg-slate-950 text-slate-100 rounded-xl p-4 font-mono text-[10px] leading-normal border border-slate-800 shadow-inner relative flex flex-col">
+                     {xmlText ? (
+                        <div className="space-y-0.5">
+                           {xmlText.split('\n').map((line, index) => {
+                              const lineNum = index + 1;
+                              const isHighlighted = highlightedLine === lineNum;
+                              return (
+                                 <div 
+                                    key={index}
+                                    id={`xml-line-${lineNum}`}
+                                    className={`flex items-start transition-all duration-500 py-0.5 px-2 rounded-md ${
+                                      isHighlighted 
+                                      ? 'bg-violet-950/80 border-l-4 border-violet-500 font-bold text-violet-200 shadow-lg ring-1 ring-violet-500/30 py-1' 
+                                      : 'hover:bg-slate-900/50'
+                                    }`}
+                                 >
+                                    <span className={`w-8 select-none text-right pr-2 mr-3 border-r shrink-0 ${
+                                      isHighlighted 
+                                      ? 'text-violet-400 border-violet-500 font-bold' 
+                                      : 'text-slate-700 border-slate-900'
+                                    }`}>
+                                       {lineNum}
+                                    </span>
+                                    <span className={`whitespace-pre-wrap break-all flex-1 ${
+                                      isHighlighted ? 'text-violet-100' : 'text-slate-300'
+                                    }`}>
+                                       {line}
+                                    </span>
+                                 </div>
+                              );
+                           })}
+                        </div>
+                     ) : (
+                        <div className="flex-1 flex items-center justify-center text-center p-6 text-slate-500">
+                           XML Kodları Okunamadı.
+                        </div>
+                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ASSISTANT SECTION */}
         {activeMainTab === 'assistant' && (
@@ -1055,15 +1433,53 @@ function App() {
                    </div>
                    
                    <button 
-                     onClick={handleIngestPdf} 
-                     disabled={pdfUploadLoading || !pdfFile}
-                     className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 font-bold text-sm transition-all shadow-sm ${
-                        pdfUploadLoading || !pdfFile ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                     }`}>
-                     {pdfUploadLoading ? (
-                       <> <Activity className="w-4 h-4 animate-spin"/> Milyonlarca kural işleniyor... </>
-                     ) : 'Veritabanına Ekle ve Eğit'}
-                   </button>
+                      onClick={handleIngestPdf} 
+                      disabled={pdfUploadLoading || !pdfFile}
+                      className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 font-bold text-sm transition-all shadow-sm ${
+                         pdfUploadLoading || !pdfFile ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                      }`}>
+                      {pdfUploadLoading ? (
+                        <> <Activity className="w-4 h-4 animate-spin"/> Milyonlarca kural işleniyor... </>
+                      ) : 'Veritabanına Ekle ve Eğit'}
+                    </button>
+
+                    {pdfUploadLoading && (
+                      <div className="mt-4 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3 shadow-sm transition-all duration-300">
+                        <div className="flex justify-between items-center text-xs font-bold">
+                          <span className="text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                            {uploadProgress < 100 ? (
+                              <>
+                                <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-ping"></span>
+                                📁 Dosya Sunucuya Yükleniyor...
+                              </>
+                            ) : (
+                              <>
+                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                ⚡ Yapay Zeka Kuralları Öğreniyor...
+                              </>
+                            )}
+                          </span>
+                          <span className="font-mono text-slate-600 dark:text-slate-400">
+                            {uploadProgress < 100 ? `%${uploadProgress}` : `%${learningProgress}`}
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden shadow-inner relative">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              uploadProgress < 100 
+                                ? 'bg-gradient-to-r from-indigo-500 to-violet-600' 
+                                : 'bg-gradient-to-r from-emerald-500 to-teal-600 animate-pulse'
+                            }`} 
+                            style={{ width: `${uploadProgress < 100 ? uploadProgress : (learningProgress === 0 ? 5 : learningProgress)}%` }}
+                          ></div>
+                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                          {uploadProgress < 100 
+                            ? 'Dosya transferi yapılıyor, lütfen tarayıcıyı kapatmayın.' 
+                            : 'Dosya başarıyla yüklendi! Yapay zeka PDF kılavuzundaki binlerce kuralı okuyor ve vektör veritabanına eğitiyor. Bu işlem birkaç saniye sürebilir...'}
+                        </p>
+                      </div>
+                    )}
 
                    <div className="mt-8 p-4 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-800 leading-relaxed max-h-48 overflow-auto">
                       <strong>Bilgi:</strong> Akıllı GİB Asistanı, kendi hafızasını (Vektör DB) kullanır. Sorularınızı yanıtlarken en son yüklediğiniz <b>Kılavuzlara</b> dayanarak %100 doğrulukla ve halüsinasyon yapmadan cevap vermeye çalışır.
@@ -1119,6 +1535,46 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* Premium Notification Modal */}
+      {modalConfig.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm transition-all duration-300 animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5 transform transition-all duration-300 scale-100 relative overflow-hidden animate-scaleIn">
+            {/* Top accent line */}
+            <div className={`absolute top-0 left-0 right-0 h-1.5 ${modalConfig.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+            
+            <div className="flex flex-col items-center text-center space-y-4 pt-2">
+              {modalConfig.type === 'success' ? (
+                <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 rounded-full flex items-center justify-center animate-bounce shadow-inner">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+              ) : (
+                <div className="w-16 h-16 bg-rose-50 dark:bg-rose-950/30 text-rose-500 rounded-full flex items-center justify-center animate-bounce shadow-inner">
+                  <AlertCircle className="w-10 h-10" />
+                </div>
+              )}
+              
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white">
+                {modalConfig.title}
+              </h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap leading-relaxed">
+                {modalConfig.message}
+              </p>
+            </div>
+            
+            <button 
+              onClick={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
+              className={`w-full py-3 rounded-xl font-bold text-sm transition-all shadow-sm ${
+                modalConfig.type === 'success' 
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-200 dark:shadow-none' 
+                  : 'bg-rose-600 text-white hover:bg-rose-700 shadow-rose-200 dark:shadow-none'
+              }`}
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

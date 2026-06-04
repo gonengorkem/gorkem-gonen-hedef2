@@ -24,3 +24,20 @@ dist-ssr/
 # Diğer
 debug.log
 debug_files.log
+chroma_db_new/
+*.pdf
+*.bin
+*.zip
+
+# Local DBs and temporary debug/test files
+chroma_db_local/
+chroma_db_gemini/
+check_san.py
+check_san2.py
+ingest_all.py
+test_xray.py
+test_xslt.py
+test_preview.html
+debug_*.xml
+debug_*.html
+
