@@ -225,9 +225,9 @@ function App() {
 
   // Reconciliation (DB Auditor) States & Handlers
   const [reconConfig, setReconConfig] = useState({
-    server: 'localhost\\SQLEXPRESS',
-    company_code: 'GÖRKEM_KOLAY',
-    year: '2026',
+    server: 'localhost\\SQLOTOMASYON',
+    company_code: '',
+    year: '',
     username: '',
     password: '',
     trusted: true
@@ -236,6 +236,56 @@ function App() {
   const [reconResults, setReconResults] = useState(null);
   const [reconLoading, setReconLoading] = useState(false);
   const [reconError, setReconError] = useState(null);
+
+  const [reconCompanies, setReconCompanies] = useState([]);
+  const [reconYears, setReconYears] = useState([]);
+  const [reconDbLoading, setReconDbLoading] = useState(false);
+
+  const handleFetchCompanies = async () => {
+    setReconDbLoading(true);
+    setReconError(null);
+    const formData = new FormData();
+    formData.append("server", reconConfig.server);
+    formData.append("trusted", reconConfig.trusted ? "true" : "false");
+    if (reconConfig.username) formData.append("username", reconConfig.username);
+    if (reconConfig.password) formData.append("password", reconConfig.password);
+
+    try {
+      const response = await axios.post("http://localhost:8000/api/reconcile/companies", formData);
+      setReconCompanies(response.data);
+      if (response.data.length > 0) {
+        const firstComp = response.data[0];
+        setReconConfig(prev => ({ ...prev, company_code: firstComp }));
+        await handleFetchYears(firstComp);
+      }
+    } catch (err) {
+      setReconError(err.response?.data?.detail || "Veritabanından firmalar listelenirken bir hata oluştu.");
+    } finally {
+      setReconDbLoading(false);
+    }
+  };
+
+  const handleFetchYears = async (companyCode) => {
+    const formData = new FormData();
+    formData.append("server", reconConfig.server);
+    formData.append("company_code", companyCode);
+    formData.append("trusted", reconConfig.trusted ? "true" : "false");
+    if (reconConfig.username) formData.append("username", reconConfig.username);
+    if (reconConfig.password) formData.append("password", reconConfig.password);
+
+    try {
+      const response = await axios.post("http://localhost:8000/api/reconcile/years", formData);
+      setReconYears(response.data);
+      if (response.data.length > 0) {
+        setReconConfig(prev => ({ ...prev, year: response.data[0] }));
+      } else {
+        setReconConfig(prev => ({ ...prev, year: "" }));
+      }
+    } catch (err) {
+      setReconError(err.response?.data?.detail || "Firmaya ait çalışma yılları yüklenirken hata oluştu.");
+    }
+  };
+
 
   const handleReconcileSubmit = async (e) => {
     e.preventDefault();
@@ -1656,38 +1706,75 @@ function App() {
                 <form onSubmit={handleReconcileSubmit} className="space-y-4">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">SQL Server Instance</label>
-                    <input 
-                      type="text" 
-                      value={reconConfig.server} 
-                      onChange={e => setReconConfig(prev => ({...prev, server: e.target.value}))}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
-                      placeholder="localhost\SQLEXPRESS" 
-                      required
-                    />
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={reconConfig.server} 
+                        onChange={e => setReconConfig(prev => ({...prev, server: e.target.value}))}
+                        className="flex-1 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                        placeholder="localhost\SQLEXPRESS" 
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={handleFetchCompanies}
+                        disabled={reconDbLoading}
+                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-850 dark:hover:bg-slate-800 dark:text-white text-xs font-bold rounded-xl transition border border-slate-200 dark:border-slate-800 cursor-pointer shrink-0"
+                      >
+                        {reconDbLoading ? "..." : "Firmaları Yükle"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Firma Kodu</label>
-                      <input 
-                        type="text" 
-                        value={reconConfig.company_code} 
-                        onChange={e => setReconConfig(prev => ({...prev, company_code: e.target.value}))}
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
-                        placeholder="GÖRKEM_KOLAY" 
-                        required
-                      />
+                      {reconCompanies.length > 0 ? (
+                        <select
+                          value={reconConfig.company_code}
+                          onChange={e => {
+                            setReconConfig(prev => ({...prev, company_code: e.target.value}));
+                            handleFetchYears(e.target.value);
+                          }}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white font-semibold cursor-pointer"
+                        >
+                          {reconCompanies.map((c, idx) => (
+                            <option key={idx} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input 
+                          type="text" 
+                          value={reconConfig.company_code} 
+                          onChange={e => setReconConfig(prev => ({...prev, company_code: e.target.value}))}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                          placeholder="GÖRKEM_KOLAY" 
+                          required
+                        />
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Çalışma Yılı</label>
-                      <input 
-                        type="text" 
-                        value={reconConfig.year} 
-                        onChange={e => setReconConfig(prev => ({...prev, year: e.target.value}))}
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
-                        placeholder="2026" 
-                        required
-                      />
+                      {reconYears.length > 0 ? (
+                        <select
+                          value={reconConfig.year}
+                          onChange={e => setReconConfig(prev => ({...prev, year: e.target.value}))}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white font-semibold cursor-pointer"
+                        >
+                          {reconYears.map((y, idx) => (
+                            <option key={idx} value={y}>{y}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input 
+                          type="text" 
+                          value={reconConfig.year} 
+                          onChange={e => setReconConfig(prev => ({...prev, year: e.target.value}))}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                          placeholder="2026" 
+                          required
+                        />
+                      )}
                     </div>
                   </div>
 
