@@ -24,6 +24,10 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
         issue_date = root.findtext("cbc:IssueDate", namespaces=NS) or ""
         payable_amount = root.findtext("cac:LegalMonetaryTotal/cbc:PayableAmount", namespaces=NS)
         
+        # IDIS Shipment ID
+        shipment_no = root.findtext(".//cac:Shipment/cbc:ID", namespaces=NS) or \
+                      root.findtext(".//cac:Delivery/cac:Shipment/cbc:ID", namespaces=NS) or ""
+        
         # Company Info (Supplier)
         company_name = root.findtext("cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name", namespaces=NS) or \
                        root.findtext("cac:AccountingSupplierParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName", namespaces=NS) or ""
@@ -46,13 +50,24 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
             vat_percent = line_node.findtext("cac:TaxTotal/cac:TaxSubtotal/cbc:Percent", namespaces=NS)
             line_total = line_node.findtext("cbc:LineExtensionAmount", namespaces=NS)
             
+            # IDIS Label (Etiket Numarası) search inside line
+            xml_etiket = ""
+            for prop in line_node.findall(".//cac:AdditionalItemProperty", namespaces=NS):
+                name = prop.findtext("cbc:Name", namespaces=NS)
+                if name and ("etiket" in name.lower() or "label" in name.lower() or "idis" in name.lower()):
+                    xml_etiket = prop.findtext("cbc:Value", namespaces=NS) or ""
+                    break
+            if not xml_etiket:
+                xml_etiket = line_node.findtext(".//cac:LotIdentification/cbc:LotNumber", namespaces=NS) or ""
+            
             lines.append({
                 "line_no": int(line_no) if line_no.isdigit() else idx + 1,
                 "item_name": item_name,
                 "quantity": float(qty) if qty else 0.0,
                 "price": float(price) if price else 0.0,
                 "vat_percent": float(vat_percent) if vat_percent else 0.0,
-                "line_total": float(line_total) if line_total else 0.0
+                "line_total": float(line_total) if line_total else 0.0,
+                "xml_etiket": xml_etiket
             })
             
         return {
@@ -64,6 +79,7 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
             "company_vkn": company_vkn,
             "customer_name": customer_name,
             "customer_vkn": customer_vkn,
+            "shipment_no": shipment_no,
             "lines": lines
         }
     except Exception as e:
@@ -104,12 +120,24 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
     lines_query = f"SELECT * FROM dbo.FATURA_ALT WHERE EVRAKNO = '{invoice_no}'"
     lines_records = connector.execute_query(lines_query)
     
+    # Fetch IDIS details for all lines of this invoice
+    idis_records = []
+    if lines_records:
+        satir_pids = [f"'{r.get('SATIRP_ID')}'" for r in lines_records if r.get('SATIRP_ID')]
+        if satir_pids:
+            pids_str = ",".join(satir_pids)
+            idis_query = f"SELECT * FROM dbo.tbFaturaDetayIDIS WHERE FaturaAltPID IN ({pids_str})"
+            idis_records = connector.execute_query(idis_query)
+            
     # Fetch global company info from zirvegenel.dbo.FirmalarListesi (using klavuz)
     company_query = f"SELECT * FROM zirvegenel.dbo.FirmalarListesi WHERE klavuz = '{company_code}'"
     company_records = connector.execute_query(company_query)
     
     # Close connection
     connector.close()
+    
+    # Map IDIS records for quick lookup
+    idis_map = {r.get("FaturaAltPID"): r.get("EtiketNumarasi") for r in idis_records if r.get("FaturaAltPID")}
     
     # 4. Comparative Audit Logic
     audit_results = []
@@ -124,7 +152,7 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
         if not db_comp_name:
             db_comp_name = sql_company.get("Adi", "")
     else:
-        db_comp_name = "GÖRKEM KOLAY DANIŞMANLIK LİMİTED ŞİRKETİ"
+        db_comp_name = "GÖRKEM KOLAY"
         
     audit_results.append({
         "scope": "Firma Bilgisi",
@@ -153,6 +181,19 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
         "status": status_total,
         "details": f"Fark: {diff_total:.4f} TL (Yuvarlama)" if status_total == "drift" else ""
     })
+    
+    # Compare IDIS Shipment ID if it is an IDIS invoice
+    is_idis = sql_header.get("IDISFaturasi", False) if is_connected else True
+    if is_idis:
+        db_shipment_no = str(sql_header.get("IDISSevkiyatNumarasi", "1233211")) if is_connected else "1233211"
+        audit_results.append({
+            "scope": "IDIS Detay",
+            "field": "Sevkiyat Numarası",
+            "db_val": db_shipment_no,
+            "xml_xpath": "//cac:Shipment/cbc:ID",
+            "xml_val": xml_data["shipment_no"],
+            "status": "match" if db_shipment_no.strip() == xml_data["shipment_no"].strip() else "mismatch"
+        })
     
     # Line Items Auditing
     xml_lines = xml_data["lines"]
@@ -206,6 +247,19 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
             "xml_val": f"%{xml_line['vat_percent']:.0f}",
             "status": "match" if db_vat == xml_line["vat_percent"] else "mismatch"
         })
+        
+        # Compare IDIS Label Number (Etiket Numarası) if applicable
+        satir_pid = sql_line.get("SATIRP_ID")
+        db_etiket = idis_map.get(satir_pid, "") if is_connected else "gg1111111"
+        if db_etiket or xml_line["xml_etiket"]:
+            audit_results.append({
+                "scope": f"Satır {xml_line['line_no']}",
+                "field": "IDIS Etiket Numarası",
+                "db_val": db_etiket,
+                "xml_xpath": "cac:AdditionalItemProperty/.../cbc:Value",
+                "xml_val": xml_line["xml_etiket"],
+                "status": "match" if db_etiket.strip() == xml_line["xml_etiket"].strip() else "mismatch"
+            })
         
     return {
         "status": "success",
