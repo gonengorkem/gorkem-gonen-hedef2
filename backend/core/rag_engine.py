@@ -269,6 +269,11 @@ def query_rag(query_text: str):
     Eğer bağlamda cevaba dair bir kural geçmiyorsa, bunu açıkça belirt ancak bir e-Dönüşüm uzmanı olarak bildiğin teknik bilgileri kullanarak (UBL-TR standartları gibi) yardımcı ol. 
     Mümkün olduğunca teknik, net ve doğrudan test edilebilir bilgiler sağla. Yorum katma, kuralı söyle.
 
+    [GÜNCEL TÜRKİYE MEVZUAT BİLGİLERİ]:
+    * Türkiye'deki yasal KDV oranları Temmuz 2023 tarihinde güncellenmiştir.
+    * Güncel KDV oranları: %0 (İstisna/Muafiyet), %1, %10 (Eski %8 olanlar %10 yapıldı) ve %20 (Eski %18 olanlar %20 yapıldı) şeklindedir.
+    * Eski GİB teknik kılavuzlarında veya XML örneklerinde eski tarihli olmalarından ötürü %8 veya %18 oranları geçebilir. Ancak faturada kullanılabilecek güncel KDV oranlarının %0, %1, %10 ve %20 olduğunu mutlaka vurgulayarak cevap ver.
+
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ]:
     {context_text}
 
@@ -283,6 +288,7 @@ def query_rag(query_text: str):
         "answer": response.content,
         "sources": sources
     }
+
 
 async def query_rag_stream(query_text: str):
     """Queries the Chroma vector database and generates a streaming answer using Gemini."""
@@ -303,11 +309,17 @@ async def query_rag_stream(query_text: str):
     Eğer bağlamda cevaba dair bir kural geçmiyorsa, bunu açıkça belirt ancak bir e-Dönüşüm uzmanı olarak bildiğin teknik bilgileri kullanarak (UBL-TR standartları gibi) yardımcı ol. 
     Mümkün olduğunca teknik, net ve doğrudan test edilebilir bilgiler sağla. Yorum katma, kuralı söyle.
 
+    [GÜNCEL TÜRKİYE MEVZUAT BİLGİLERİ]:
+    * Türkiye'deki yasal KDV oranları Temmuz 2023 tarihinde güncellenmiştir.
+    * Güncel KDV oranları: %0 (İstisna/Muafiyet), %1, %10 (Eski %8 olanlar %10 yapıldı) ve %20 (Eski %18 olanlar %20 yapıldı) şeklindedir.
+    * Eski GİB teknik kılavuzlarında veya XML örneklerinde eski tarihli olmalarından ötürü %8 veya %18 oranları geçebilir. Ancak faturada kullanılabilecek güncel KDV oranlarının %0, %1, %10 ve %20 olduğunu mutlaka vurgulayarak cevap ver.
+
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ]:
     {context_text}
 
     Kullanıcının Sorusu: {query_text}
     """
+
     
     model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
     
