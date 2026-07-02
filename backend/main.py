@@ -434,5 +434,42 @@ async def api_xray(xml_base64: str = Form(...), search_text: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/reconcile")
+async def api_reconcile_invoice(
+    file: UploadFile = File(...),
+    server: str = Form(...),
+    company_code: str = Form(...),
+    year: str = Form(...),
+    username: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    trusted: bool = Form(True)
+):
+    if not file.filename or not file.filename.endswith('.xml'):
+        raise HTTPException(status_code=400, detail="Lütfen geçerli bir UBL XML dosyası yükleyiniz.")
+        
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xml") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+        
+    try:
+        from core.reconciliation_engine import run_reconciliation
+        res = run_reconciliation(
+            xml_path=tmp_path,
+            server=server,
+            company_code=company_code,
+            year=year,
+            username=username,
+            password=password,
+            trusted=trusted
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Mutabakat testi sırasında hata oluştu: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

@@ -222,6 +222,55 @@ function App() {
   const [chatMessages, setChatMessages] = useState([{role: 'bot', text: 'Merhaba! GİB kılavuzları ve e-Dönüşüm kuralları hakkında bana her şeyi sorabilirsin.'}]);
   const [chatLoading, setChatLoading] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Reconciliation (DB Auditor) States & Handlers
+  const [reconConfig, setReconConfig] = useState({
+    server: 'localhost\\SQLEXPRESS',
+    company_code: 'GÖRKEM_KOLAY',
+    year: '2026',
+    username: '',
+    password: '',
+    trusted: true
+  });
+  const [reconFile, setReconFile] = useState(null);
+  const [reconResults, setReconResults] = useState(null);
+  const [reconLoading, setReconLoading] = useState(false);
+  const [reconError, setReconError] = useState(null);
+
+  const handleReconcileSubmit = async (e) => {
+    e.preventDefault();
+    if (!reconFile) {
+      setReconError("Lütfen karşılaştırma için bir UBL XML dosyası yükleyin.");
+      return;
+    }
+    
+    setReconLoading(true);
+    setReconError(null);
+    setReconResults(null);
+    
+    const formData = new FormData();
+    formData.append("file", reconFile);
+    formData.append("server", reconConfig.server);
+    formData.append("company_code", reconConfig.company_code);
+    formData.append("year", reconConfig.year);
+    formData.append("trusted", reconConfig.trusted ? "true" : "false");
+    if (reconConfig.username) formData.append("username", reconConfig.username);
+    if (reconConfig.password) formData.append("password", reconConfig.password);
+    
+    try {
+      const response = await axios.post("http://localhost:8000/api/reconcile", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data"
+        }
+      });
+      setReconResults(response.data);
+    } catch (err) {
+      setReconError(err.response?.data?.detail || "Veritabanı mutabakatı sırasında bir sunucu hatası oluştu.");
+    } finally {
+      setReconLoading(false);
+    }
+  };
+
   
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -695,6 +744,11 @@ function App() {
             onClick={() => setActiveMainTab('assistant')} 
             className={`py-4 px-6 font-bold text-sm border-b-2 transition flex items-center gap-2 ${activeMainTab === 'assistant' ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
             <MessageSquare className="w-5 h-5"/> Akıllı GİB Asistanı
+          </button>
+          <button 
+            onClick={() => setActiveMainTab('reconciliation')} 
+            className={`py-4 px-6 font-bold text-sm border-b-2 transition flex items-center gap-2 ${activeMainTab === 'reconciliation' ? 'border-rose-600 text-rose-700 bg-rose-50/50 animate-fadeIn' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
+            <Activity className="w-5 h-5 text-rose-500"/> Veritabanı Mutabakatı
           </button>
         </div>
       </div>
@@ -1577,6 +1631,225 @@ function App() {
                    <ChatInputBox onSend={handleSendChatStream} loading={chatLoading} />
                 </div>
              </div>
+          </div>
+        )}
+
+        {/* RECONCILIATION SECTION */}
+        {activeMainTab === 'reconciliation' && (
+          <div className="space-y-8 animate-fadeIn">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
+              <h2 className="text-2xl font-bold mb-2 text-slate-800 dark:text-white flex items-center gap-2">
+                <Activity className="w-7 h-7 text-rose-500" /> Veritabanı ve XML Mutabakat Testi
+              </h2>
+              <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">
+                Zirve Yazılım SQL Server test veritabanınızdaki (<code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-rose-500">zirvegenel.mdf</code> ve <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-rose-500">[Yıl]T.mdf</code>) fatura ve satır kayıtları ile UBL XML çıktısını kıyaslayarak veri kayıplarını ve yuvarlama farklarını denetleyin.
+              </p>
+            </div>
+
+            <div className="flex flex-col lg:flex-row gap-8">
+              {/* LEFT CONFIG COLUMN */}
+              <div className="w-full lg:w-1/3 bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 space-y-6 h-fit">
+                <h3 className="text-lg font-bold text-slate-800 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-indigo-500" /> SQL Sunucu & Firma Ayarları
+                </h3>
+                
+                <form onSubmit={handleReconcileSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">SQL Server Instance</label>
+                    <input 
+                      type="text" 
+                      value={reconConfig.server} 
+                      onChange={e => setReconConfig(prev => ({...prev, server: e.target.value}))}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                      placeholder="localhost\SQLEXPRESS" 
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Firma Kodu</label>
+                      <input 
+                        type="text" 
+                        value={reconConfig.company_code} 
+                        onChange={e => setReconConfig(prev => ({...prev, company_code: e.target.value}))}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                        placeholder="GÖRKEM_KOLAY" 
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Çalışma Yılı</label>
+                      <input 
+                        type="text" 
+                        value={reconConfig.year} 
+                        onChange={e => setReconConfig(prev => ({...prev, year: e.target.value}))}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                        placeholder="2026" 
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 py-2">
+                    <input 
+                      type="checkbox" 
+                      id="trusted_conn" 
+                      checked={reconConfig.trusted}
+                      onChange={e => setReconConfig(prev => ({...prev, trusted: e.target.checked}))}
+                      className="w-4 h-4 text-rose-600 focus:ring-rose-500 border-slate-300 rounded"
+                    />
+                    <label htmlFor="trusted_conn" className="text-sm font-semibold text-slate-700 dark:text-slate-300 select-none cursor-pointer">Windows Kimlik Doğrulaması (Trusted)</label>
+                  </div>
+
+                  {!reconConfig.trusted && (
+                    <div className="space-y-4 animate-fadeIn">
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Kullanıcı Adı (SA)</label>
+                        <input 
+                          type="text" 
+                          value={reconConfig.username} 
+                          onChange={e => setReconConfig(prev => ({...prev, username: e.target.value}))}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Şifre</label>
+                        <input 
+                          type="password" 
+                          value={reconConfig.password} 
+                          onChange={e => setReconConfig(prev => ({...prev, password: e.target.value}))}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 focus:ring-2 focus:ring-rose-500 focus:outline-none transition-all dark:text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Karşılaştırılacak UBL XML Dosyası</label>
+                    <div className="relative border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-center hover:border-rose-500 transition-colors">
+                      <input 
+                        type="file" 
+                        accept=".xml"
+                        onChange={e => setReconFile(e.target.files[0])}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <FileCode className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                      <p className="text-xs font-bold text-slate-600 dark:text-slate-400 truncate">
+                        {reconFile ? reconFile.name : "XML faturasını sürükleyin veya seçin"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    disabled={reconLoading}
+                    className={`w-full py-4 rounded-2xl font-bold text-sm text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
+                      reconLoading 
+                        ? 'bg-slate-400 cursor-not-allowed shadow-none' 
+                        : 'bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 shadow-rose-100 dark:shadow-none hover:scale-[1.01] cursor-pointer'
+                    }`}
+                  >
+                    {reconLoading ? (
+                      <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Activity className="w-5 h-5" />
+                    )}
+                    Mutabakat Analizini Çalıştır
+                  </button>
+                </form>
+              </div>
+
+              {/* RIGHT RESULTS COLUMN */}
+              <div className="w-full lg:w-2/3 bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 min-h-[500px]">
+                {reconError && (
+                  <div className="mb-6 p-4 bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/50 rounded-2xl text-rose-700 dark:text-rose-400 text-sm font-semibold flex items-center gap-3 animate-fadeIn">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    {reconError}
+                  </div>
+                )}
+
+                {reconLoading && (
+                  <div className="space-y-6 py-8 animate-pulse">
+                    <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-lg w-1/3" />
+                    <div className="space-y-3">
+                      <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                      <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                      <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                      <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                    </div>
+                  </div>
+                )}
+
+                {!reconResults && !reconLoading && (
+                  <div className="h-full flex flex-col items-center justify-center text-center py-20 text-slate-400">
+                    <Search className="w-16 h-16 mb-4 text-slate-300 dark:text-slate-800" />
+                    <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300 mb-2">Analize Hazır</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-500 max-w-md leading-relaxed">
+                      Sol panelden test SQL Server ve firma detaylarını girip ürettiğiniz XML faturasını yükleyerek mutabakat analizini başlatabilirsiniz.
+                    </p>
+                  </div>
+                )}
+
+                {reconResults && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {/* Header Info Panel */}
+                    <div className="flex flex-wrap justify-between items-center bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 p-4 rounded-2xl gap-3">
+                      <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Analiz Edilen Belge</p>
+                        <p className="text-lg font-bold text-slate-800 dark:text-white font-mono">{reconResults.invoice_no || "Bilinmeyen No"}</p>
+                      </div>
+                      
+                      {reconResults.is_mock && (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-900/50 rounded-xl text-xs font-bold animate-pulse">
+                          <Activity className="w-4 h-4 shrink-0 text-blue-500" />
+                          Simülasyon Modu (SQL Server Bağlantısı Fallback)
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Comparative Table */}
+                    <div className="overflow-x-auto border border-slate-100 dark:border-slate-800 rounded-2xl">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800">
+                            <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Kapsam</th>
+                            <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Veri Alanı</th>
+                            <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">SQL Veritabanı Değeri</th>
+                            <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">XML Fatura Değeri</th>
+                            <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 text-center">Durum</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {reconResults.audit_results.map((res, idx) => {
+                            let statusBadge = null;
+                            if (res.status === 'match') {
+                              statusBadge = <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30">Eşleşti</span>;
+                            } else if (res.status === 'mismatch') {
+                              statusBadge = <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 border border-rose-100 dark:border-rose-900/30">Uyuşmazlık</span>;
+                            } else if (res.status === 'drift') {
+                              statusBadge = <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Hassasiyet Kaybı</span>;
+                            } else if (res.status === 'missing_in_db') {
+                              statusBadge = <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-violet-50 dark:bg-violet-950/20 text-violet-700 dark:text-violet-400 border border-violet-100 dark:border-violet-900/30">DB'de Yok</span>;
+                            }
+
+                            return (
+                              <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                                <td className="p-4 text-sm font-bold text-slate-700 dark:text-slate-300">{res.scope}</td>
+                                <td className="p-4 text-sm text-slate-600 dark:text-slate-400">{res.field}</td>
+                                <td className="p-4 text-sm font-mono text-slate-800 dark:text-slate-200">{res.db_val}</td>
+                                <td className="p-4 text-sm font-mono text-slate-800 dark:text-slate-200">{res.xml_val}</td>
+                                <td className="p-4 text-center">{statusBadge}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </main>
