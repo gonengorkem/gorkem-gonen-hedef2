@@ -24,8 +24,9 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
         issue_date = root.findtext("cbc:IssueDate", namespaces=NS) or ""
         payable_amount = root.findtext("cac:LegalMonetaryTotal/cbc:PayableAmount", namespaces=NS)
         
-        # IDIS Shipment ID
-        shipment_no = root.findtext(".//cac:Shipment/cbc:ID", namespaces=NS) or \
+        # IDIS Shipment ID: search for cbc:ID with schemeID="SEVKIYATNO"
+        shipment_no = root.findtext(".//cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID[@schemeID='SEVKIYATNO']", namespaces=NS) or \
+                      root.findtext(".//cac:Shipment/cbc:ID", namespaces=NS) or \
                       root.findtext(".//cac:Delivery/cac:Shipment/cbc:ID", namespaces=NS) or ""
         
         # Company Info (Supplier)
@@ -50,13 +51,16 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
             vat_percent = line_node.findtext("cac:TaxTotal/cac:TaxSubtotal/cbc:Percent", namespaces=NS)
             line_total = line_node.findtext("cbc:LineExtensionAmount", namespaces=NS)
             
-            # IDIS Label (Etiket Numarası) search inside line
-            xml_etiket = ""
-            for prop in line_node.findall(".//cac:AdditionalItemProperty", namespaces=NS):
-                name = prop.findtext("cbc:Name", namespaces=NS)
-                if name and ("etiket" in name.lower() or "label" in name.lower() or "idis" in name.lower()):
-                    xml_etiket = prop.findtext("cbc:Value", namespaces=NS) or ""
-                    break
+            # IDIS Label (Etiket Numarası) search inside line: first try schemeID="ETIKETNO"
+            xml_etiket = line_node.findtext("cac:Item/cac:AdditionalItemIdentification/cbc:ID[@schemeID='ETIKETNO']", namespaces=NS) or \
+                         line_node.findtext("cac:Item/cac:AdditionalItemIdentification/cbc:ID", namespaces=NS) or ""
+                         
+            if not xml_etiket:
+                for prop in line_node.findall(".//cac:AdditionalItemProperty", namespaces=NS):
+                    name = prop.findtext("cbc:Name", namespaces=NS)
+                    if name and ("etiket" in name.lower() or "label" in name.lower() or "idis" in name.lower()):
+                        xml_etiket = prop.findtext("cbc:Value", namespaces=NS) or ""
+                        break
             if not xml_etiket:
                 xml_etiket = line_node.findtext(".//cac:LotIdentification/cbc:LotNumber", namespaces=NS) or ""
             
@@ -186,13 +190,20 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
     is_idis = sql_header.get("IDISFaturasi", False) if is_connected else True
     if is_idis:
         db_shipment_no = str(sql_header.get("IDISSevkiyatNumarasi", "1233211")) if is_connected else "1233211"
+        xml_shipment = xml_data["shipment_no"]
+        
+        # Compare by cleaning non-digits to bypass formatting prefixes (e.g. SE-1233211 vs 1233211)
+        db_clean = "".join(filter(str.isdigit, db_shipment_no))
+        xml_clean = "".join(filter(str.isdigit, xml_shipment))
+        is_match = (db_clean == xml_clean) if (db_clean and xml_clean) else (db_shipment_no.strip() == xml_shipment.strip())
+        
         audit_results.append({
             "scope": "IDIS Detay",
             "field": "Sevkiyat Numarası",
             "db_val": db_shipment_no,
-            "xml_xpath": "//cac:Shipment/cbc:ID",
-            "xml_val": xml_data["shipment_no"],
-            "status": "match" if db_shipment_no.strip() == xml_data["shipment_no"].strip() else "mismatch"
+            "xml_xpath": "//cac:PartyIdentification[@schemeID='SEVKIYATNO']",
+            "xml_val": xml_shipment,
+            "status": "match" if is_match else "mismatch"
         })
     
     # Line Items Auditing
@@ -251,14 +262,15 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
         # Compare IDIS Label Number (Etiket Numarası) if applicable
         satir_pid = sql_line.get("SATIRP_ID")
         db_etiket = idis_map.get(satir_pid, "") if is_connected else "gg1111111"
-        if db_etiket or xml_line["xml_etiket"]:
+        xml_etiket = xml_line.get("xml_etiket", "")
+        if db_etiket or xml_etiket:
             audit_results.append({
                 "scope": f"Satır {xml_line['line_no']}",
                 "field": "IDIS Etiket Numarası",
                 "db_val": db_etiket,
-                "xml_xpath": "cac:AdditionalItemProperty/.../cbc:Value",
-                "xml_val": xml_line["xml_etiket"],
-                "status": "match" if db_etiket.strip() == xml_line["xml_etiket"].strip() else "mismatch"
+                "xml_xpath": "cac:AdditionalItemIdentification[@schemeID='ETIKETNO']",
+                "xml_val": xml_etiket,
+                "status": "match" if db_etiket.strip().lower() == xml_etiket.strip().lower() else "mismatch"
             })
         
     return {
