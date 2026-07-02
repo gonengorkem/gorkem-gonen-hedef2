@@ -44,8 +44,28 @@ _global_db = None
 def get_db():
     global _global_db
     if _global_db is None:
-        _global_db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embeddings(), collection_name="gib_docs")
+        chroma_host = os.getenv("CHROMA_SERVER_HOST")
+        chroma_port = os.getenv("CHROMA_SERVER_PORT")
+        
+        if chroma_host:
+            port_val = int(chroma_port) if chroma_port else 8000
+            safe_print(f"[RAGEngine] Connecting to remote ChromaDB server at {chroma_host}:{port_val}...")
+            import chromadb
+            client = chromadb.HttpClient(host=chroma_host, port=port_val)
+            _global_db = Chroma(
+                client=client,
+                collection_name="gib_docs",
+                embedding_function=get_embeddings()
+            )
+        else:
+            safe_print(f"[RAGEngine] Using local persistent ChromaDB at {CHROMA_PATH}...")
+            _global_db = Chroma(
+                persist_directory=CHROMA_PATH,
+                embedding_function=get_embeddings(),
+                collection_name="gib_docs"
+            )
     return _global_db
+
 
 def ingest_document(file_path: str):
     """Loads a PDF document and adds it to the Chroma vector database."""

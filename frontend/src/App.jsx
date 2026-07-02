@@ -248,7 +248,34 @@ function App() {
     });
   };
 
+  const [diffModal, setDiffModal] = useState({
+    isOpen: false,
+    fileName: '',
+    diffLines: [],
+    loading: false,
+    error: ''
+  });
+
+  const handleViewCodeDiff = async (filePath) => {
+    setDiffModal({ isOpen: true, fileName: filePath, diffLines: [], loading: true, error: '' });
+    try {
+      const response = await axios.get(`http://localhost:8000/api/diff/file?file_path=${encodeURIComponent(filePath)}`);
+      setDiffModal(prev => ({
+        ...prev,
+        loading: false,
+        diffLines: response.data.diff
+      }));
+    } catch (err) {
+      setDiffModal(prev => ({
+        ...prev,
+        loading: false,
+        error: err.response?.data?.detail || 'Kod farkı yüklenirken bir hata oluştu.'
+      }));
+    }
+  };
+
   const [geminiKey, setGeminiKey] = useState('');
+
   const [keyLoading, setKeyLoading] = useState(false);
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
@@ -829,6 +856,15 @@ function App() {
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-3">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleViewCodeDiff(file.file);
+                                          }}
+                                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-sm hover:shadow transition flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <FileCode className="w-3.5 h-3.5" /> Kod Görünümü / Farkı
+                                        </button>
                                         <span className={`text-xs px-2 py-1 rounded-md uppercase font-bold shadow-sm border
                                           ${file.status === 'new_file' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
                                           file.status === 'deleted_file' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}
@@ -1481,12 +1517,21 @@ function App() {
                       </div>
                     )}
 
-                   <div className="mt-8 p-4 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-800 leading-relaxed max-h-48 overflow-auto">
-                      <strong>Bilgi:</strong> Akıllı GİB Asistanı, kendi hafızasını (Vektör DB) kullanır. Sorularınızı yanıtlarken en son yüklediğiniz <b>Kılavuzlara</b> dayanarak %100 doğrulukla ve halüsinasyon yapmadan cevap vermeye çalışır.
-                   </div>
-                   <div className="mt-auto opacity-30 pointer-events-none mx-auto mb-4">
-                       <Cpu className="w-24 h-24 text-slate-400" />
-                   </div>
+                    <div className="mt-8 p-4 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-xl text-xs text-blue-800 dark:text-blue-200 leading-relaxed shadow-sm">
+                       <strong>Bilgi:</strong> Akıllı GİB Asistanı, kendi hafızasını (Vektör DB) kullanır. Sorularınızı yanıtlarken en son yüklediğiniz <b>Kılavuzlara</b> dayanarak %100 doğrulukla ve halüsinasyon yapmadan cevap vermeye çalışır.
+                    </div>
+                    <a 
+                      href="http://localhost:3001" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="mt-4 p-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-300 transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                    >
+                      <Activity className="w-4 h-4 text-indigo-500 animate-pulse" /> VectorDB Görsel Yönetim Paneli
+                    </a>
+                    <div className="mt-auto opacity-30 pointer-events-none mx-auto mb-4">
+                        <Cpu className="w-24 h-24 text-slate-400" />
+                    </div>
+
                 </div>
 
                 {/* RIGHTSIDE: CHAT INTERFACE */}
@@ -1575,8 +1620,118 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Code Diff Visual Modal */}
+      {diffModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm transition-all duration-300 animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-6xl w-full h-[85vh] shadow-2xl flex flex-col overflow-hidden animate-scaleIn relative">
+            {/* Modal Header */}
+            <div className="bg-slate-950 p-4 border-b border-slate-800 flex justify-between items-center select-none shrink-0">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-indigo-500" />
+                <h3 className="text-lg font-bold text-white font-mono break-all max-w-[200px] sm:max-w-md md:max-w-xl lg:max-w-2xl truncate">
+                  {diffModal.fileName}
+                </h3>
+                <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold">
+                  Görsel Kod Diff
+                </span>
+              </div>
+              <button 
+                onClick={() => setDiffModal(prev => ({ ...prev, isOpen: false }))}
+                className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-950 flex flex-col">
+              {diffModal.loading ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                  <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4" />
+                  <p className="font-semibold text-sm">Görsel kod farklılıkları hesaplanıyor...</p>
+                </div>
+              ) : diffModal.error ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-4">
+                  <AlertCircle className="w-16 h-16 text-rose-500" />
+                  <h4 className="text-lg font-bold text-white">Fark Gösterilemedi</h4>
+                  <p className="text-sm text-slate-400">{diffModal.error}</p>
+                  <button 
+                    onClick={() => handleViewCodeDiff(diffModal.fileName)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition"
+                  >
+                    Tekrar Dene
+                  </button>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col min-h-0">
+                  {/* Info alert */}
+                  <div className="mb-4 p-3 bg-indigo-950/40 border border-indigo-900/50 rounded-xl text-xs text-indigo-300 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <span>Bu analiz <b>100% yerel</b> ve <b>ücretsiz</b> gerçekleştirilmiştir. Gemini yapay zeka limitlerinizi tüketmez.</span>
+                  </div>
+
+                  {/* Diff Viewer Panel */}
+                  <div className="flex-1 overflow-auto rounded-xl border border-slate-800 bg-slate-950/70 font-mono text-xs select-text">
+                    <div className="min-w-[700px] divide-y divide-slate-900">
+                      {diffModal.diffLines.map((line, idx) => {
+                        let rowBg = '';
+                        let textClass = 'text-slate-300';
+                        let prefix = ' ';
+                        if (line.type === 'added') {
+                          rowBg = 'bg-emerald-950/30 hover:bg-emerald-950/40';
+                          textClass = 'text-emerald-400 font-medium';
+                          prefix = '+';
+                        } else if (line.type === 'removed') {
+                          rowBg = 'bg-rose-950/30 hover:bg-rose-950/40';
+                          textClass = 'text-rose-400 font-medium';
+                          prefix = '-';
+                        } else {
+                          rowBg = 'hover:bg-slate-900/30';
+                        }
+
+                        return (
+                          <div key={idx} className={`flex items-stretch leading-5 ${rowBg}`}>
+                            {/* Old Line Number */}
+                            <div className="w-12 text-slate-600 text-right pr-3 select-none py-0.5 border-r border-slate-900 bg-slate-950/50">
+                              {line.old_line || ''}
+                            </div>
+                            {/* New Line Number */}
+                            <div className="w-12 text-slate-600 text-right pr-3 select-none py-0.5 border-r border-slate-900 bg-slate-950/50">
+                              {line.new_line || ''}
+                            </div>
+                            {/* Diff prefix */}
+                            <div className={`w-6 text-center select-none py-0.5 ${line.type === 'added' ? 'text-emerald-500' : line.type === 'removed' ? 'text-rose-500' : 'text-slate-700'}`}>
+                              {prefix}
+                            </div>
+                            {/* Line Content */}
+                            <div className={`flex-1 pl-2 whitespace-pre overflow-x-auto py-0.5 ${textClass}`}>
+                              {line.text}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-950 p-4 border-t border-slate-800 flex justify-end items-center shrink-0">
+              <button 
+                onClick={() => setDiffModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-5 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 transition cursor-pointer"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+
 }
 
 export default App;

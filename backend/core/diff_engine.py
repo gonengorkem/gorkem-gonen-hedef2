@@ -236,3 +236,67 @@ def run_analysis(old_data: dict, new_data: dict):
                 })
                 
     return results
+
+def get_file_text_diff(old_filepath: str, new_filepath: str):
+    import difflib
+    try:
+        # Read old file lines
+        if old_filepath and os.path.exists(old_filepath):
+            with open(old_filepath, 'r', encoding='utf-8', errors='replace') as f:
+                old_lines = f.read().splitlines()
+        else:
+            old_lines = []
+
+        # Read new file lines
+        if new_filepath and os.path.exists(new_filepath):
+            with open(new_filepath, 'r', encoding='utf-8', errors='replace') as f:
+                new_lines = f.read().splitlines()
+        else:
+            new_lines = []
+            
+        diff_lines = []
+        matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                for idx in range(i1, i2):
+                    diff_lines.append({
+                        "type": "equal",
+                        "old_line": idx + 1,
+                        "new_line": j1 + (idx - i1) + 1,
+                        "text": old_lines[idx]
+                    })
+            elif tag == 'replace':
+                for idx in range(i1, i2):
+                    diff_lines.append({
+                        "type": "removed",
+                        "old_line": idx + 1,
+                        "new_line": None,
+                        "text": old_lines[idx]
+                    })
+                for idx in range(j1, j2):
+                    diff_lines.append({
+                        "type": "added",
+                        "old_line": None,
+                        "new_line": idx + 1,
+                        "text": new_lines[idx]
+                    })
+            elif tag == 'delete':
+                for idx in range(i1, i2):
+                    diff_lines.append({
+                        "type": "removed",
+                        "old_line": idx + 1,
+                        "new_line": None,
+                        "text": old_lines[idx]
+                    })
+            elif tag == 'insert':
+                for idx in range(j1, j2):
+                    diff_lines.append({
+                        "type": "added",
+                        "old_line": None,
+                        "new_line": idx + 1,
+                        "text": new_lines[idx]
+                    })
+        return diff_lines
+    except Exception as e:
+        return [{"type": "error", "text": f"Görsel fark oluşturulurken hata: {str(e)}"}]
+

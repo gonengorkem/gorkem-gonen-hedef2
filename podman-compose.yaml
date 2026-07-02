@@ -12,10 +12,11 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - REDIS_HOST=redis
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
-    volumes:
-      - ./backend/chroma_db_local:/app/chroma_db_local
+      - CHROMA_SERVER_HOST=chromadb
+      - CHROMA_SERVER_PORT=8000
     depends_on:
       - redis
+      - chromadb
 
   frontend:
     build:
@@ -35,17 +36,27 @@ services:
       - redis_data:/data
     restart: always
 
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: gib_chroma_server
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./chroma_data:/chroma/chroma
+    restart: always
+
   chromadb-admin:
     image: fengzhichao/chromadb-admin
     container_name: gib_vector_admin
     ports:
       - "3001:3001"
     environment:
-      - CHROMA_SERVER_HOST=backend
+      - CHROMA_SERVER_HOST=chromadb
       - CHROMA_SERVER_PORT=8000
     depends_on:
-      - backend
+      - chromadb
     restart: always
 
 volumes:
   redis_data:
+
