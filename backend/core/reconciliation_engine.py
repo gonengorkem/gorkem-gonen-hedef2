@@ -43,7 +43,7 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
             item_name = line_node.findtext("cac:Item/cbc:Name", namespaces=NS) or ""
             qty = line_node.findtext("cbc:InvoicedQuantity", namespaces=NS)
             price = line_node.findtext("cac:Price/cbc:PriceAmount", namespaces=NS)
-            vat_percent = line_node.findtext("cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent", namespaces=NS)
+            vat_percent = line_node.findtext("cac:TaxTotal/cac:TaxSubtotal/cbc:Percent", namespaces=NS)
             line_total = line_node.findtext("cbc:LineExtensionAmount", namespaces=NS)
             
             lines.append({
