@@ -150,19 +150,29 @@ def get_file_diff_endpoint(file_path: str):
     if not old_dir or not new_dir:
         raise HTTPException(status_code=400, detail="Aktif bir analiz oturumu bulunamadı. Lütfen önce paketleri analiz edin.")
     
-    # Path security check to prevent directory traversal
-    file_path_clean = file_path.lstrip("/\\")
-    old_file = os.path.abspath(os.path.join(old_dir, file_path_clean))
-    new_file = os.path.abspath(os.path.join(new_dir, file_path_clean))
+    file_path_clean = os.path.basename(file_path)
     
-    # Ensure paths stay within the extraction directory
-    if not old_file.startswith(os.path.abspath(old_dir)) or \
-       not new_file.startswith(os.path.abspath(new_dir)):
-        raise HTTPException(status_code=403, detail="Geçersiz dosya yolu erişimi.")
+    def find_file_recursively(directory: str, filename: str) -> Optional[str]:
+        if not directory or not os.path.exists(directory):
+            return None
+        for root, _, files in os.walk(directory):
+            if filename in files:
+                return os.path.abspath(os.path.join(root, filename))
+        return None
+
+    old_file = find_file_recursively(old_dir, file_path_clean)
+    new_file = find_file_recursively(new_dir, file_path_clean)
+    
+    # Path security check to prevent directory traversal
+    if old_file and not old_file.startswith(os.path.abspath(old_dir)):
+        raise HTTPException(status_code=403, detail="Geçersiz dosya yolu erişimi (Eski).")
+    if new_file and not new_file.startswith(os.path.abspath(new_dir)):
+        raise HTTPException(status_code=403, detail="Geçersiz dosya yolu erişimi (Yeni).")
         
     from core.diff_engine import get_file_text_diff
     diff = get_file_text_diff(old_file, new_file)
     return {"file": file_path_clean, "diff": diff}
+
 
 from core.rag_engine import ingest_document, ingest_directory, query_rag, query_rag_stream
 
