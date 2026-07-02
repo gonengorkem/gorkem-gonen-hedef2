@@ -24,7 +24,7 @@ def parse_ubl_invoice_data(xml_path: str) -> dict:
         issue_date = root.findtext("cbc:IssueDate", namespaces=NS) or ""
         payable_amount = root.findtext("cac:LegalMonetaryTotal/cbc:PayableAmount", namespaces=NS)
         
-        # Company Info
+        # Company Info (Supplier)
         company_name = root.findtext("cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name", namespaces=NS) or \
                        root.findtext("cac:AccountingSupplierParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName", namespaces=NS) or ""
         company_vkn = root.findtext("cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID[@schemeID='VKN']", namespaces=NS) or \
@@ -81,24 +81,31 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
         
     invoice_no = xml_data["invoice_no"]
     
-    # Determine year database (e.g. 2026T)
-    db_name = f"{year}T" if year else "2026T"
+    # Zirve database name convention is [FirmaKodu]_[Yıl]T
+    db_name = f"{company_code}_{year}T" if (company_code and year) else (f"{year}T" if year else "2026T")
     
     # 2. Connect to SQL database
     connector = DBConnector(server=server, database=db_name, username=username, password=password, trusted=trusted)
     is_connected = connector.connect()
     
     # 3. Pull SQL Data
-    # Fetch invoice header
-    header_query = f"SELECT * FROM dbo.FATURA WHERE FATURANO = '{invoice_no}'"
+    # Fetch invoice header (EVRAKNO is the column name in Zirve)
+    header_query = f"SELECT * FROM dbo.FATURA WHERE EVRAKNO = '{invoice_no}'"
     header_records = connector.execute_query(header_query)
     
-    # Fetch invoice lines
-    lines_query = f"SELECT * FROM dbo.FATURA_ALT WHERE FATURANO = '{invoice_no}' OR FATURA_ID = (SELECT FATURA_ID FROM dbo.FATURA WHERE FATURANO = '{invoice_no}')"
+    if is_connected and not header_records:
+        connector.close()
+        return {
+            "status": "error",
+            "message": f"'{invoice_no}' numaralı fatura '{db_name}' veritabanında bulunamadı. Lütfen masaüstü programından faturanın kaydedildiğinden emin olun."
+        }
+        
+    # Fetch invoice lines (linked via EVRAKNO)
+    lines_query = f"SELECT * FROM dbo.FATURA_ALT WHERE EVRAKNO = '{invoice_no}'"
     lines_records = connector.execute_query(lines_query)
     
-    # Fetch global company info (Cross-database join simulation or direct query)
-    company_query = f"SELECT * FROM zirvegenel.dbo.FIRMA_PROFILLERI WHERE FIRMAKODU = '{company_code}'"
+    # Fetch global company info from zirvegenel.dbo.FirmalarListesi (using klavuz)
+    company_query = f"SELECT * FROM zirvegenel.dbo.FirmalarListesi WHERE klavuz = '{company_code}'"
     company_records = connector.execute_query(company_query)
     
     # Close connection
@@ -112,7 +119,13 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
     sql_company = company_records[0] if company_records else {}
     
     # Compare Company Name
-    db_comp_name = sql_company.get("UNVAN", "MOCK GÖRKEM KOLAY DANIŞMANLIK LİMİTED ŞİRKETİ") if is_connected else "GÖRKEM KOLAY DANIŞMANLIK LİMİTED ŞİRKETİ"
+    if is_connected and sql_company:
+        db_comp_name = (sql_company.get("Edit2", "") + " " + sql_company.get("Adi", "")).strip()
+        if not db_comp_name:
+            db_comp_name = sql_company.get("Adi", "")
+    else:
+        db_comp_name = "GÖRKEM KOLAY DANIŞMANLIK LİMİTED ŞİRKETİ"
+        
     audit_results.append({
         "scope": "Firma Bilgisi",
         "field": "Firma Unvanı",
@@ -143,13 +156,15 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
     
     # Line Items Auditing
     xml_lines = xml_data["lines"]
-    sql_lines = sorted(lines_records, key=lambda x: x.get("SATIRNO", 0))
+    
+    # Sort lines by sequence if possible, or order of fetching
+    sql_lines = sorted(lines_records, key=lambda x: x.get("REF", 0))
     
     for i, xml_line in enumerate(xml_lines):
         sql_line = sql_lines[i] if i < len(sql_lines) else {}
         
-        # Compare Line Item Name
-        db_item_name = sql_line.get("URUNADI", xml_line["item_name"])
+        # Compare Line Item Name (STA is stok name in Zirve)
+        db_item_name = sql_line.get("STA", sql_line.get("URUNADI", xml_line["item_name"]))
         audit_results.append({
             "scope": f"Satır {xml_line['line_no']}",
             "field": "Ürün/Hizmet Adı",
@@ -170,8 +185,8 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
             "status": "match" if db_qty == xml_line["quantity"] else "mismatch"
         })
         
-        # Compare Price
-        db_price = float(sql_line.get("FIYAT", xml_line["price"]))
+        # Compare Price (BRFTL is unit price TL in Zirve)
+        db_price = float(sql_line.get("BRFTL", sql_line.get("FIYAT", xml_line["price"])))
         audit_results.append({
             "scope": f"Satır {xml_line['line_no']}",
             "field": "Birim Fiyat",
@@ -181,8 +196,8 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
             "status": "match" if db_price == xml_line["price"] else "mismatch"
         })
         
-        # Compare VAT Percent
-        db_vat = float(sql_line.get("KDVORAN", xml_line["vat_percent"]))
+        # Compare VAT Percent (KDVY is VAT percentage in Zirve)
+        db_vat = float(sql_line.get("KDVY", sql_line.get("KDVORAN", xml_line["vat_percent"])))
         audit_results.append({
             "scope": f"Satır {xml_line['line_no']}",
             "field": "KDV Oranı",
@@ -190,17 +205,6 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
             "xml_xpath": "cac:InvoiceLine/.../cbc:Percent",
             "xml_val": f"%{xml_line['vat_percent']:.0f}",
             "status": "match" if db_vat == xml_line["vat_percent"] else "mismatch"
-        })
-        
-    # Check for missing elements (e.g. database fields empty in XML)
-    if is_connected and not sql_header:
-        audit_results.append({
-            "scope": "Veri Bulunamadı",
-            "field": "Fatura Kaydı",
-            "db_val": f"{invoice_no} no'lu kayıt",
-            "xml_xpath": "cbc:ID",
-            "xml_val": invoice_no,
-            "status": "missing_in_db"
         })
         
     return {
