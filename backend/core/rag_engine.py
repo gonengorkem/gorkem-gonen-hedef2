@@ -199,6 +199,37 @@ def keyword_search(docs, query_text: str, k: int = 5):
     scored_docs.sort(key=lambda x: x[1], reverse=True)
     return [doc for doc, score in scored_docs[:k]]
 
+def extract_document_version_score(doc) -> tuple:
+    """
+    Kılavuz dosya adındaki versiyon veya tarih bilgisini çıkararak sıralama anahtarı oluşturur.
+    En yüksek versiyon/tarih en üstte yer alır.
+    """
+    import re
+    source = doc.metadata.get("source", "")
+    filename = os.path.basename(source).lower()
+    
+    # 1. v1.18, v.1.18, v1_18, versiyon_1.18 gibi versiyon şablonlarını ara
+    version_match = re.search(r'(?:v|version|versiyon|v\.)\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?', filename)
+    if version_match:
+        major = int(version_match.group(1) or 0)
+        minor = int(version_match.group(2) or 0)
+        patch = int(version_match.group(3) or 0)
+    else:
+        # Genel ondalık sayıları ara (örn: kilavuz_1.5.pdf)
+        float_match = re.search(r'(\d+)\.(\d+)', filename)
+        if float_match:
+            major = int(float_match.group(1))
+            minor = int(float_match.group(2))
+            patch = 0
+        else:
+            major, minor, patch = 0, 0, 0
+            
+    # 2. Yıl bilgisini ara (20xx veya 19xx)
+    year_match = re.search(r'\b(20\d{2}|19\d{2})\b', filename)
+    year = int(year_match.group(1)) if year_match else 0
+    
+    return (major, minor, patch, year)
+
 def get_hybrid_context(query_text: str):
     from langchain_core.documents import Document
     db = get_db()
@@ -247,7 +278,11 @@ def get_hybrid_context(query_text: str):
                 seen.add(snippet)
                 merged.append(doc)
             
+    # En güncel kılavuzları en üstte olacak şekilde kararlı sıralama (stable sort) uygula
+    merged.sort(key=extract_document_version_score, reverse=True)
+    
     return merged[:8]
+
 
 def query_rag(query_text: str):
     """Queries the Chroma vector database and generates an answer using Gemini."""
@@ -260,7 +295,13 @@ def query_rag(query_text: str):
         context_text = ""
         sources = []
     else:
-        context_text = "\n\n---\n\n".join([doc.page_content for doc in results])
+        context_parts = []
+        for doc in results:
+            src_name = os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak"))
+            page_num = doc.metadata.get("page", 0) + 1
+            part_content = f"[Kaynak: {src_name}, Sayfa: {page_num}]\n{doc.page_content}"
+            context_parts.append(part_content)
+        context_text = "\n\n---\n\n".join(context_parts)
         sources = list(set([os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak")) for doc in results]))
         
     prompt_template = f"""
@@ -290,6 +331,7 @@ def query_rag(query_text: str):
     }
 
 
+
 async def query_rag_stream(query_text: str):
     """Queries the Chroma vector database and generates a streaming answer using Gemini."""
     if not os.environ.get("GEMINI_API_KEY"):
@@ -301,7 +343,13 @@ async def query_rag_stream(query_text: str):
     if len(results) == 0:
         context_text = ""
     else:
-        context_text = "\n\n---\n\n".join([doc.page_content for doc in results])
+        context_parts = []
+        for doc in results:
+            src_name = os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak"))
+            page_num = doc.metadata.get("page", 0) + 1
+            part_content = f"[Kaynak: {src_name}, Sayfa: {page_num}]\n{doc.page_content}"
+            context_parts.append(part_content)
+        context_text = "\n\n---\n\n".join(context_parts)
         
     prompt_template = f"""
     Sen, test uzmanları için geliştirilmiş "GİB Paket Analizörü" uygulaması içinde çalışan uzman bir e-Dönüşüm asistanısın.
@@ -326,4 +374,5 @@ async def query_rag_stream(query_text: str):
     async for chunk in model.astream(prompt_template):
         if chunk.content:
             yield chunk.content
+
 
