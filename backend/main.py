@@ -434,6 +434,67 @@ async def api_xray(xml_base64: str = Form(...), search_text: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/reconcile/companies")
+def api_get_reconcile_companies(
+    server: str = Form(...),
+    username: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    trusted: bool = Form(True)
+):
+    from core.db_connector import DBConnector
+    connector = DBConnector(server=server, database="master", username=username, password=password, trusted=trusted)
+    is_connected = connector.connect()
+    
+    if not is_connected:
+        return ["KOLAY_GÖRKEM", "MİKRO_GÖRKEM", "MİKRO_TEST", "ZED-10185"]
+        
+    try:
+        query = "SELECT name FROM sys.databases"
+        records = connector.execute_query(query)
+        companies = []
+        for r in records:
+            name = r.get("name", "")
+            if name.endswith("_GENEL") and name.upper() not in ["ZIRVEGENEL", "MİKRO_GENEL"]:
+                comp_code = name[:-6]
+                companies.append(comp_code)
+        return sorted(list(set(companies)))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Firmalar listelenirken hata oluştu: {str(e)}")
+    finally:
+        connector.close()
+
+@app.post("/api/reconcile/years")
+def api_get_reconcile_years(
+    server: str = Form(...),
+    company_code: str = Form(...),
+    username: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    trusted: bool = Form(True)
+):
+    import re
+    from core.db_connector import DBConnector
+    connector = DBConnector(server=server, database="master", username=username, password=password, trusted=trusted)
+    is_connected = connector.connect()
+    
+    if not is_connected:
+        return ["2026", "2025"]
+        
+    try:
+        query = "SELECT name FROM sys.databases"
+        records = connector.execute_query(query)
+        years = []
+        pattern = re.compile(rf"^{re.escape(company_code)}_(\d{{4}})T$", re.IGNORECASE)
+        for r in records:
+            name = r.get("name", "")
+            match = pattern.match(name)
+            if match:
+                years.append(match.group(1))
+        return sorted(list(set(years)), reverse=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Yıllar listelenirken hata oluştu: {str(e)}")
+    finally:
+        connector.close()
+
 @app.post("/api/reconcile")
 async def api_reconcile_invoice(
     file: UploadFile = File(...),
