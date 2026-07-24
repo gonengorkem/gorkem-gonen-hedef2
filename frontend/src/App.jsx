@@ -357,11 +357,12 @@ function App() {
     fileName: '',
     diffLines: [],
     loading: false,
-    error: ''
+    error: '',
+    showOnlyChanges: true
   });
 
   const handleViewCodeDiff = async (filePath) => {
-    setDiffModal({ isOpen: true, fileName: filePath, diffLines: [], loading: true, error: '' });
+    setDiffModal(prev => ({ ...prev, isOpen: true, fileName: filePath, diffLines: [], loading: true, error: '' }));
     try {
       const response = await axios.get(`http://localhost:8000/api/diff/file?file_path=${encodeURIComponent(filePath)}`);
       setDiffModal(prev => ({
@@ -1994,19 +1995,33 @@ function App() {
             <div className="bg-slate-950 p-4 border-b border-slate-800 flex justify-between items-center select-none shrink-0">
               <div className="flex items-center gap-2">
                 <FileCode className="w-5 h-5 text-indigo-500" />
-                <h3 className="text-lg font-bold text-white font-mono break-all max-w-[200px] sm:max-w-md md:max-w-xl lg:max-w-2xl truncate">
+                <h3 className="text-lg font-bold text-white font-mono break-all max-w-[150px] sm:max-w-md md:max-w-xl lg:max-w-2xl truncate">
                   {diffModal.fileName}
                 </h3>
-                <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold">
+                <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold hidden sm:inline">
                   Görsel Kod Diff
                 </span>
               </div>
-              <button 
-                onClick={() => setDiffModal(prev => ({ ...prev, isOpen: false }))}
-                className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
-              >
-                <XCircle className="w-6 h-6" />
-              </button>
+              
+              <div className="flex items-center gap-4">
+                {/* Show Only Changes Toggle */}
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-300 select-none cursor-pointer hover:text-white transition-colors bg-slate-850/40 px-3 py-1.5 rounded-xl border border-slate-800">
+                  <input 
+                    type="checkbox" 
+                    checked={diffModal.showOnlyChanges}
+                    onChange={(e) => setDiffModal(prev => ({ ...prev, showOnlyChanges: e.target.checked }))}
+                    className="w-4 h-4 text-indigo-600 border-slate-700 bg-slate-800 rounded focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>Sadece Değişiklikleri Göster (Hunk View)</span>
+                </label>
+
+                <button 
+                  onClick={() => setDiffModal(prev => ({ ...prev, isOpen: false }))}
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Content */}
@@ -2039,7 +2054,15 @@ function App() {
                   {/* Diff Viewer Panel */}
                   <div className="flex-1 overflow-auto rounded-xl border border-slate-800 bg-slate-950/70 font-mono text-xs select-text">
                     <div className="min-w-[700px] divide-y divide-slate-900">
-                      {diffModal.diffLines.map((line, idx) => {
+                      {getVisibleDiffLines(diffModal.diffLines, diffModal.showOnlyChanges).map((line, idx) => {
+                        if (line.type === 'separator') {
+                          return (
+                            <div key={idx} className="flex bg-slate-900/40 text-slate-500 font-semibold select-none py-1.5 border-y border-slate-900/80 text-center justify-center italic text-[11px] leading-5">
+                              {line.text}
+                            </div>
+                          );
+                        }
+
                         let rowBg = '';
                         let textClass = 'text-slate-300';
                         let prefix = ' ';
@@ -2098,5 +2121,41 @@ function App() {
   );
 
 }
+
+const getVisibleDiffLines = (lines, showOnlyChanges) => {
+  if (!showOnlyChanges) return lines;
+  
+  const n = lines.length;
+  const visibleIndices = new Set();
+  const CONTEXT_SIZE = 3;
+  
+  for (let i = 0; i < n; i++) {
+    if (lines[i].type === 'added' || lines[i].type === 'removed') {
+      const start = Math.max(0, i - CONTEXT_SIZE);
+      const end = Math.min(n - 1, i + CONTEXT_SIZE);
+      for (let j = start; j <= end; j++) {
+        visibleIndices.add(j);
+      }
+    }
+  }
+  
+  const result = [];
+  let lastIdx = -1;
+  
+  for (let i = 0; i < n; i++) {
+    if (visibleIndices.has(i)) {
+      if (lastIdx !== -1 && i - lastIdx > 1) {
+        result.push({
+          type: 'separator',
+          text: `@@ ... ${i - lastIdx - 1} satır atlandı ... @@`
+        });
+      }
+      result.push(lines[i]);
+      lastIdx = i;
+    }
+  }
+  
+  return result;
+};
 
 export default App;
