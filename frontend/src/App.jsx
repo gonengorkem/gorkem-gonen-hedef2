@@ -313,7 +313,12 @@ function App() {
           "Content-Type": "multipart/form-data"
         }
       });
-      setReconResults(response.data);
+      if (response.data && response.data.status === "error") {
+        setReconError(response.data.message || "Mutabakat sırasında bir hata oluştu.");
+        setReconResults(null);
+      } else {
+        setReconResults(response.data);
+      }
     } catch (err) {
       setReconError(err.response?.data?.detail || "Veritabanı mutabakatı sırasında bir sunucu hatası oluştu.");
     } finally {
@@ -1908,7 +1913,7 @@ function App() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                          {reconResults.audit_results.map((res, idx) => {
+                          {(reconResults.audit_results || []).map((res, idx) => {
                             let statusBadge = null;
                             if (res.status === 'match') {
                               statusBadge = <span className="inline-flex px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30">Eşleşti</span>;
