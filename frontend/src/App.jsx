@@ -1048,9 +1048,9 @@ function App() {
                              <th className="p-4 w-[30%] text-red-700">Negatif Senaryo</th>
                            </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                            {results.scenarios.map((scen, idx) => (
-                             <tr key={idx} className="hover:bg-slate-50 dark:bg-slate-950 transition-colors">
+                             <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
                                <td className="p-4 align-top">
                                  <p className="font-semibold text-slate-800 dark:text-slate-200 break-all">{scen.target}</p>
                                  <p className="text-xs text-slate-400 mt-1 break-all">{scen.file}</p>
@@ -1060,13 +1060,13 @@ function App() {
                                    {scen.type}
                                  </span>
                                </td>
-                               <td className="p-4 align-top text-emerald-900 leading-relaxed bg-emerald-50/30">
+                               <td className="p-4 align-top text-emerald-900 dark:text-emerald-300 leading-relaxed bg-emerald-50 dark:bg-emerald-950 bg-opacity-30 dark:bg-opacity-20">
                                  <div className="flex gap-2">
                                    <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
                                    <p>{scen.positive}</p>
                                  </div>
                                </td>
-                               <td className="p-4 align-top text-red-900 leading-relaxed bg-red-50/30">
+                               <td className="p-4 align-top text-rose-900 dark:text-rose-300 leading-relaxed bg-rose-50 dark:bg-rose-950 bg-opacity-30 dark:bg-opacity-20">
                                  <div className="flex gap-2">
                                    <XCircle className="w-5 h-5 text-red-500 shrink-0" />
                                    <p>{scen.negative}</p>
