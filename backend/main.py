@@ -58,6 +58,31 @@ def find_history_content(extraction_dir: str) -> Optional[str]:
                     print(f"Error reading history file {file_path}: {e}")
     return None
 
+def generate_history_summary(history_text: str) -> str:
+    import os
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return history_text
+        
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.prompts import ChatPromptTemplate
+        
+        model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, google_api_key=api_key)
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Sen uzman bir e-Fatura/e-Dönüşüm ve yazılım entegrasyonu analistisin. GİB tarafından yayınlanan paket güncelleme geçmişini (History.txt) analiz etmeli ve en son yapılan güncellemeleri anlaşılır, profesyonel, emojili ve kategorize edilmiş Türkçe bir özet olarak sunmalısın. Sadece son güncelleme tarihini ve o tarihteki değişiklikleri getir. Örneğin en son sürümdeki değişen ve eklenen kuralları maddeler halinde açıkla. Çıktı sadece bu özet olsun, başka açıklama yazma. Markdown formatı kullanabilirsin."),
+            ("user", "İşte GİB güncelleme geçmişi (History.txt):\n\n{history_content}\n\nLütfen en son güncellemedeki değişiklikleri özetle:")
+        ])
+        
+        chain = prompt | model
+        response = chain.invoke({"history_content": history_text[:8000]})
+        summary = response.content.strip()
+        return summary
+    except Exception as e:
+        print(f"[HistorySummary] Error generating summary with Gemini: {e}")
+        return history_text
+
 @app.post("/api/analyze")
 async def analyze_packages(
     old_package: UploadFile = File(...),
@@ -139,8 +164,9 @@ async def analyze_packages(
         # Generate Scenarios based on Diff
         scenario_results = generate_scenarios(diff_results)
         
-        # Extract history text (changelog) from the packages
-        history_text = find_history_content(new_data["extraction_dir"]) or find_history_content(old_data["extraction_dir"])
+        # Extract history text (changelog) from the packages and summarize with Gemini
+        raw_history = find_history_content(new_data["extraction_dir"]) or find_history_content(old_data["extraction_dir"])
+        history_text = generate_history_summary(raw_history) if raw_history else None
         
         response_data = {
             "status": "success",

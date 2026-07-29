@@ -918,7 +918,7 @@ function App() {
                     <button 
                       onClick={() => setActiveTab('history')}
                       className={`px-6 py-3 font-semibold text-sm rounded-t-lg transition border-b-2 flex items-center gap-2 ${activeTab === 'history' ? 'bg-white dark:bg-slate-900 border-amber-500 text-amber-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
-                      Paket Değişiklik Tarihçesi
+                      GİB Değişiklik Günlüğü (AI Özet)
                     </button>
                  )}
                </div>
@@ -1090,8 +1090,8 @@ function App() {
                       <div className="flex items-center gap-3 mb-6 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-2xl text-amber-850 dark:text-amber-300">
                          <BookOpen className="w-8 h-8 text-amber-500 shrink-0" />
                          <div>
-                            <h4 className="font-bold text-sm">GİB Resmi Paket Değişiklik Tarihçesi</h4>
-                            <p className="text-xs opacity-90 mt-0.5">Bu veriler yüklenen yeni ZIP paketi içerisindeki resmi <b>History.txt</b> dosyasından otomatik olarak okunmuştur.</p>
+                            <h4 className="font-bold text-sm">GİB Resmi Paket Değişiklik Analizi (Yapay Zeka Özeti)</h4>
+                            <p className="text-xs opacity-90 mt-0.5">Bu rapor, yeni ZIP paketi içerisindeki resmi <b>History.txt</b> dosyası analiz edilerek yapay zeka tarafından otomatik oluşturulmuştur.</p>
                          </div>
                       </div>
                       
