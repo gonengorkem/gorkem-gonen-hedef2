@@ -71,12 +71,16 @@ def generate_history_summary(history_text: str) -> str:
         model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, google_api_key=api_key)
         
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "Sen uzman bir e-Fatura/e-Dönüşüm ve yazılım entegrasyonu analistisin. GİB tarafından yayınlanan paket güncelleme geçmişini (History.txt) analiz etmeli ve en son yapılan güncellemeleri anlaşılır, profesyonel, emojili ve kategorize edilmiş Türkçe bir özet olarak sunmalısın. Sadece son güncelleme tarihini ve o tarihteki değişiklikleri getir. Örneğin en son sürümdeki değişen ve eklenen kuralları maddeler halinde açıkla. Çıktı sadece bu özet olsun, başka açıklama yazma. Markdown formatı kullanabilirsin."),
+            ("system", """Sen uzman bir e-Fatura/e-Dönüşüm ve yazılım entegrasyonu analistisin.
+GİB tarafından yayınlanan paket güncelleme geçmişini (History.txt) analiz etmelisin.
+ÖNEMLİ NOT: Dosyadaki güncelleme günlükleri eski tarihten yeni tarihe doğru (kronolojik) sıralanmıştır. En yeni güncelleme dosyanın EN ALTINDA yer alır.
+Görevin: Dosyanın en altında yer alan en güncel tarih bloğunu (örneğin 20260701 gibi en son tarihi) bulup, sadece o en son güncellemedeki değişiklikleri anlaşılır, profesyonel, emojili ve kategorize edilmiş Türkçe bir özet olarak sunmaktır.
+Önceki yıllardaki/tarihlerdeki eski değişiklikleri kesinlikle rapora dahil etme. Çıktı sadece bu son güncellemelerin özeti olsun. Markdown formatı kullanabilirsin."""),
             ("user", "İşte GİB güncelleme geçmişi (History.txt):\n\n{history_content}\n\nLütfen en son güncellemedeki değişiklikleri özetle:")
         ])
         
         chain = prompt | model
-        response = chain.invoke({"history_content": history_text[:8000]})
+        response = chain.invoke({"history_content": history_text})
         summary = response.content.strip()
         return summary
     except Exception as e:
