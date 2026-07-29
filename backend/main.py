@@ -41,6 +41,23 @@ app.add_middleware(
 def read_root():
     return {"message": "GİB Hedef Analizörü API Çalışıyor."}
 
+def find_history_content(extraction_dir: str) -> Optional[str]:
+    for root, _, files in os.walk(extraction_dir):
+        for file in files:
+            lf = file.lower()
+            if 'history' in lf or 'guncelleme' in lf or 'tarihce' in lf or 'changelog' in lf or 'readme' in lf:
+                file_path = os.path.join(root, file)
+                try:
+                    with open(file_path, 'rb') as f:
+                        raw = f.read()
+                    try:
+                        return raw.decode('utf-8')
+                    except UnicodeDecodeError:
+                        return raw.decode('windows-1254', errors='replace')
+                except Exception as e:
+                    print(f"Error reading history file {file_path}: {e}")
+    return None
+
 @app.post("/api/analyze")
 async def analyze_packages(
     old_package: UploadFile = File(...),
@@ -122,6 +139,9 @@ async def analyze_packages(
         # Generate Scenarios based on Diff
         scenario_results = generate_scenarios(diff_results)
         
+        # Extract history text (changelog) from the packages
+        history_text = find_history_content(new_data["extraction_dir"]) or find_history_content(old_data["extraction_dir"])
+        
         response_data = {
             "status": "success",
             "message": "Paketler ayrıştırıldı ve analiz tamamlandı.",
@@ -129,7 +149,8 @@ async def analyze_packages(
                 "old_files_found": len(old_data["files"]),
                 "new_files_found": len(new_data["files"]),
                 "diff_results": diff_results,
-                "scenarios": scenario_results
+                "scenarios": scenario_results,
+                "history": history_text
             }
         }
         

@@ -914,7 +914,13 @@ function App() {
                    Otomatik Test Senaryoları
                    <span className="bg-emerald-100 text-emerald-700 py-0.5 px-2 rounded-full text-xs font-bold">{results.scenarios.length} Senaryo</span>
                  </button>
-                 {/* Assistant moved to main tabs */}
+                 {results.history && (
+                    <button 
+                      onClick={() => setActiveTab('history')}
+                      className={`px-6 py-3 font-semibold text-sm rounded-t-lg transition border-b-2 flex items-center gap-2 ${activeTab === 'history' ? 'bg-white dark:bg-slate-900 border-amber-500 text-amber-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:bg-slate-950'}`}>
+                      Paket Değişiklik Tarihçesi
+                    </button>
+                 )}
                </div>
                
                {activeTab === 'diff' && (
@@ -1074,13 +1080,29 @@ function App() {
                                </td>
                              </tr>
                            ))}
-                        </tbody>
-                     </table>
-                  </div>
-               )}
+                         </tbody>
+                      </table>
+                   </div>
+                )}
 
-            </div>
-          </div>
+                {activeTab === 'history' && results.history && (
+                   <div className="p-6 animate-fadeIn">
+                      <div className="flex items-center gap-3 mb-6 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-2xl text-amber-850 dark:text-amber-300">
+                         <BookOpen className="w-8 h-8 text-amber-500 shrink-0" />
+                         <div>
+                            <h4 className="font-bold text-sm">GİB Resmi Paket Değişiklik Tarihçesi</h4>
+                            <p className="text-xs opacity-90 mt-0.5">Bu veriler yüklenen yeni ZIP paketi içerisindeki resmi <b>History.txt</b> dosyasından otomatik olarak okunmuştur.</p>
+                         </div>
+                      </div>
+                      
+                      <div className="bg-slate-50 dark:bg-slate-950/80 rounded-xl p-5 border border-slate-200 dark:border-slate-800 font-mono text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap overflow-x-auto max-h-[600px] overflow-y-auto select-text">
+                         {results.history}
+                      </div>
+                   </div>
+                )}
+
+             </div>
+           </div>
         )}
         </div>
 
