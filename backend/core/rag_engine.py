@@ -66,6 +66,16 @@ def get_db():
             )
     return _global_db
 
+def warmup_rag_engine():
+    """Pre-loads HuggingFace embeddings model and ChromaDB client on server startup."""
+    try:
+        safe_print("[RAGEngine] Warming up HuggingFace embeddings & ChromaDB...")
+        get_embeddings()
+        get_db()
+        safe_print("[RAGEngine] Warmup complete! Vector DB is ready for instant queries.")
+    except Exception as e:
+        safe_print(f"[RAGEngine] Warmup warning: {e}")
+
 
 def ingest_document(file_path: str):
     """Loads a PDF document and adds it to the Chroma vector database."""

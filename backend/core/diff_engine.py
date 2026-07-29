@@ -133,12 +133,12 @@ def compare_files(old_filepath: str, new_filepath: str, filename: str = ""):
                 })
             continue
             
-        # Simplistic compare for attribute changes on first match (can be deep mapped by xpath)
+        # Fast O(1) hash lookup by xpath instead of linear O(N*M) scan
         old_list = old_els[tag_name]
+        old_by_xpath = {x["xpath"]: x for x in old_list}
         for new_item in new_list:
             display_name = get_display_name(tag_name, new_item)
-            # find matching old item by xpath
-            matched_old = next((x for x in old_list if x["xpath"] == new_item["xpath"]), None)
+            matched_old = old_by_xpath.get(new_item["xpath"])
             if matched_old is None:
                 diff_report.append({
                     "type": "added",

@@ -37,6 +37,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_event():
+    import asyncio
+    from core.rag_engine import warmup_rag_engine
+    await asyncio.to_thread(warmup_rag_engine)
+
 @app.get("/")
 def read_root():
     return {"message": "GİB Hedef Analizörü API Çalışıyor."}
