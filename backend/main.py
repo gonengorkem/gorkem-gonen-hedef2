@@ -254,7 +254,8 @@ async def api_rag_ingest(file: UploadFile = File(...)):
             with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            chunk_count = ingest_directory(extract_dir)
+            import asyncio
+            chunk_count = await asyncio.to_thread(ingest_directory, extract_dir)
             shutil.rmtree(extract_dir, ignore_errors=True)
             
             # Invalidate RAG chat cache
@@ -263,7 +264,8 @@ async def api_rag_ingest(file: UploadFile = File(...)):
             
             return {"status": "success", "message": f"ZIP içindeki PDF'ler başarıyla tarandı ve {chunk_count} parça GİB kuralı veritabanına eğitildi!"}
         else:
-            chunk_count = ingest_document(tmp_path)
+            import asyncio
+            chunk_count = await asyncio.to_thread(ingest_document, tmp_path)
             
             # Invalidate RAG chat cache
             from core.redis_cache import redis_cache
@@ -288,7 +290,8 @@ async def api_rag_chat(query: str = Form(...)):
             print(f"[RedisCache] RAG Chat cache hit! Returning cached answer.")
             return {"status": "success", "data": cached_res}
             
-        res = query_rag(query)
+        import asyncio
+        res = await asyncio.to_thread(query_rag, query)
         # Cache RAG answer for 12 hours
         redis_cache.set(cache_key, res, expire_seconds=43200)
         return {"status": "success", "data": res}
