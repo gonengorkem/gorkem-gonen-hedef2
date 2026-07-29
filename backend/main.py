@@ -1,4 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Response
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import shutil
@@ -101,9 +103,13 @@ async def analyze_packages(
     if not old_package.filename or not new_package.filename or not old_package.filename.endswith('.zip') or not new_package.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Değerlendirme için .zip dosyaları gereklidir.")
     
-    # Read files to compute cache key hash
+    # Read files to compute cache key hash and check max payload limit
     old_content = await old_package.read()
     new_content = await new_package.read()
+    
+    MAX_FILE_SIZE = 50 * 1024 * 1024 # 50 MB Limit
+    if len(old_content) > MAX_FILE_SIZE or len(new_content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="Yüklenen ZIP paket boyutu çok büyük! Maksimum dosya boyutu 50 MB olmalıdır.")
     
     import hashlib
     old_hash = hashlib.md5(old_content).hexdigest()
@@ -198,6 +204,69 @@ async def analyze_packages(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"İşleme sırasında bir hata oluştu: {str(e)}")
+
+
+class ExportReportRequest(BaseModel):
+    diff_results: List[Dict[str, Any]]
+    scenarios: List[Dict[str, Any]]
+    history: Optional[str] = None
+
+@app.post("/api/export/csv")
+async def export_report_csv(payload: ExportReportRequest):
+    import io
+    import csv
+    
+    output = io.StringIO()
+    # Write UTF-8 BOM for Microsoft Excel Turkish character compatibility
+    output.write('\ufeff')
+    writer = csv.writer(output, delimiter=';')
+    
+    # 1. SUMMARY HEADER
+    writer.writerow(["GİB PAKET ANALİZİ VE DEĞİŞİKLİK RAPORU"])
+    writer.writerow(["Toplam Dosya Farkı", "Üretilen Test Senaryosu"])
+    writer.writerow([len(payload.diff_results), len(payload.scenarios)])
+    writer.writerow([])
+    
+    # 2. FILE DIFF RESULTS
+    writer.writerow(["--- DOSYA BAZLI DEĞİŞİKLİK VE ŞEMA FARKLARI ---"])
+    writer.writerow(["Dosya Adı", "Durum", "Fark Türü", "Hedef Eleman / XPath", "Açıklama"])
+    
+    for item in payload.diff_results:
+        fname = item.get("file", "")
+        status = item.get("status", "")
+        diffs = item.get("diff", [])
+        if not diffs:
+            writer.writerow([fname, status, "Değişiklik Yok", "-", "Dosyada fark bulunamadı."])
+        else:
+            for d in diffs:
+                writer.writerow([
+                    fname,
+                    status,
+                    d.get("type", ""),
+                    d.get("target", d.get("xpath", "")),
+                    d.get("message", d.get("human_readable", ""))
+                ])
+    writer.writerow([])
+    
+    # 3. TEST SCENARIOS
+    writer.writerow(["--- OTOMATİK OLUŞTURULAN TEST SENARYOLARI ---"])
+    writer.writerow(["Senaryo ID", "Modül / Kategori", "Test Başlığı", "Girdi / Şema Koşulu", "Beklenen GİB Yanıtı / Davranış"])
+    
+    for sc in payload.scenarios:
+        writer.writerow([
+            sc.get("id", ""),
+            sc.get("category", ""),
+            sc.get("title", ""),
+            sc.get("input_data", ""),
+            sc.get("expected", "")
+        ])
+        
+    csv_content = output.getvalue()
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=GIB_Paket_Analiz_Raporu.csv"}
+    )
 
 
 @app.get("/api/diff/file")

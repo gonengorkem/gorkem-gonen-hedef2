@@ -182,6 +182,30 @@ function App() {
     }
   };
 
+  const handleExportCSV = async () => {
+    if (!results) return;
+    try {
+      const response = await axios.post(`${API_BASE}/api/export/csv`, {
+        diff_results: results.diff_results || [],
+        scenarios: results.scenarios || [],
+        history: results.history || null
+      }, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'GIB_Paket_Analiz_Raporu.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error("Export CSV Error:", err);
+      alert("Rapor indirilirken bir hata oluştu.");
+    }
+  };
+
   const handleXrayFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       setXrayFile(e.target.files[0]);
@@ -895,9 +919,18 @@ function App() {
                   <h2 className="text-xl font-bold">Analiz Sonucu Özeti</h2>
                   <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">Eski pakette {results.old_files_found}, yeni pakette {results.new_files_found} dosya analiz edildi.</p>
                </div>
-               <button onClick={() => setResults(null)} className="text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200">
-                 Yeni Paket Yükle
-               </button>
+               <div className="flex items-center gap-3">
+                  <button 
+                    onClick={handleExportCSV}
+                    className="px-4 py-2 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 rounded-xl text-sm font-semibold flex items-center gap-2 transition shadow-sm"
+                  >
+                     <Download className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                     Excel / CSV Raporu İndir
+                  </button>
+                  <button onClick={() => setResults(null)} className="text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 px-3 py-2">
+                    Yeni Paket Yükle
+                  </button>
+               </div>
             </div>
 
             {/* TAB MENU */}
