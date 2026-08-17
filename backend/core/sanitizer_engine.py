@@ -54,8 +54,8 @@ def sanitize_ubl_xml(xml_content: bytes) -> bytes:
                 elem.text = mask_rules[local_name]
             
             # Mask free text Notes if they exist
-            elif local_name == "Note" and elem.text and elem.text.strip():
-                elem.text = "NOT ALANI KVKK KAPSAMINDA MASKELE NMİŞTİR."
+            elif local_name == "Note":
+                elem.text = "NOT ALANI KVKK KAPSAMINDA MASKELENMİŞTİR."
             
             # Special handling for VKN/TCKN (CompanyID, IdentificationCode, etc.)
             elif local_name in ["CompanyID", "IdentificationCode", "ID"] and elem.text and elem.text.strip():

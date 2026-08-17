@@ -101,6 +101,13 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
         
     invoice_no = xml_data["invoice_no"]
     
+    # Validate company_code and year against connection string / identifier injection
+    import re
+    if company_code and not re.match(r'^[a-zA-Z0-9_\-]+$', company_code):
+        return {"status": "error", "message": "Geçersiz firma kodu formatı. Yalnızca harf, rakam, alt çizgi ve tire kullanılabilir."}
+    if year and not re.match(r'^\d{4}$', str(year)):
+        return {"status": "error", "message": "Geçersiz yıl formatı. 4 haneli yıl girilmelidir."}
+
     # Zirve database name convention is [FirmaKodu]_[Yıl]T
     db_name = f"{company_code}_{year}T" if (company_code and year) else (f"{year}T" if year else "2026T")
     

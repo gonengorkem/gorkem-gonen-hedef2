@@ -24,16 +24,28 @@ def uncompress_archive_file(archive_filepath: str, target_dir: str):
     ZIP için standart zipfile kütüphanesini ve Zip Slip denetimini kullanır.
     """
     ext = os.path.splitext(archive_filepath)[1].lower()
+    target_dir_abs = os.path.abspath(target_dir)
     
     if ext == '.zip':
         try:
             with zipfile.ZipFile(archive_filepath, 'r') as zip_ref:
                 safe_extract_zip(zip_ref, target_dir)
             return
-        except (zipfile.BadZipFile, Exception):
-            pass  # Fallback to tar if zipfile fails
+        except zipfile.BadZipFile:
+            pass  # Sadece bozuk/non-standard zip ise tar fallback'ine geç
+        # Not: ValueError (Zip Slip tespit edildi) burada yutulmaz, işlemi anında keser.
             
-    # RAR veya Zip fallback için bsdtar kullan
+    # RAR veya Zip fallback için bsdtar listeleme ve traversal denetimi
+    list_res = subprocess.run(["tar", "-tf", archive_filepath], capture_output=True, text=True)
+    if list_res.returncode == 0:
+        for filename in list_res.stdout.splitlines():
+            filename = filename.strip()
+            if not filename:
+                continue
+            dest_path = os.path.abspath(os.path.join(target_dir_abs, filename))
+            if not (dest_path == target_dir_abs or dest_path.startswith(target_dir_abs + os.sep)):
+                raise ValueError(f"Güvenlik uyarısı: Arşiv içinde Zip Slip / Path Traversal tespit edildi! Dosya: {filename}")
+
     res = subprocess.run(["tar", "-xf", archive_filepath, "-C", target_dir], capture_output=True)
     if res.returncode != 0:
         err_msg = res.stderr.decode('utf-8', errors='ignore')

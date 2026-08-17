@@ -684,6 +684,9 @@ def api_get_reconcile_years(
     trusted: bool = Form(True)
 ):
     import re
+    if company_code and not re.match(r'^[a-zA-Z0-9_\-]+$', company_code):
+        raise HTTPException(status_code=400, detail="Geçersiz firma kodu formatı.")
+        
     from core.db_connector import DBConnector
     connector = DBConnector(server=server, database="master", username=username, password=password, trusted=trusted)
     is_connected = connector.connect()

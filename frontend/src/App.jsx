@@ -1462,6 +1462,7 @@ function App() {
                   {xrayResult.html_preview ? (
                      <iframe 
                         srcDoc={xrayResult.html_preview}
+                        sandbox="allow-same-origin"
                         onLoad={(e) => handleIframeLoad(e, xrayResult.xml_base64)}
                         className="w-full h-[700px] border-none bg-white"
                         title="XSLT Röntgen Preview"
