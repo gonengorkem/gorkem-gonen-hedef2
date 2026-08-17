@@ -290,7 +290,10 @@ def extract_document_version_score(doc) -> tuple:
     En yüksek versiyon/tarih en üstte yer alır.
     """
     import re
-    source = doc.metadata.get("source", "")
+    if hasattr(doc, 'metadata'):
+        source = doc.metadata.get("source", "")
+    else:
+        source = str(doc) if doc else ""
     filename = os.path.basename(source).lower()
     
     # 1. v1.18, v.1.18, v1_18, versiyon_1.18 gibi versiyon şablonlarını ara
