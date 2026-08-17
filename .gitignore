@@ -28,6 +28,7 @@ chroma_db_new/
 *.pdf
 *.bin
 *.zip
+*.rar
 
 # Local DBs and temporary debug/test files
 chroma_db_local/

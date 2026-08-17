@@ -13,3 +13,4 @@ langchain-docling
 redis
 boto3
 pyodbc
+rarfile

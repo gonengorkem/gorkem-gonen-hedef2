@@ -1,10 +1,66 @@
+import os
+import ssl
+import sys
+from dotenv import load_dotenv
+
+# Load backend/.env explicitly
+env_file = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_file)
+
+# Global SSL Certificate Verification Bypass for Corporate Interception Proxies (Zscaler / Fortinet / Corporate CA)
+os.environ['CURL_CA_BUNDLE'] = ''
+os.environ['REQUESTS_CA_BUNDLE'] = ''
+os.environ['PYTHONHTTPSVERIFY'] = '0'
+os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
+ssl._create_default_https_context = ssl._create_unverified_context
+
+def _unverified_default_context(*args, **kwargs):
+    ctx = ssl._create_unverified_context(*args, **kwargs)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+ssl.create_default_context = _unverified_default_context
+
+try:
+    import urllib3
+    urllib3.disable_warnings()
+except Exception:
+    pass
+
+try:
+    import httpx
+    _orig_httpx_init = httpx.Client.__init__
+    def _patched_httpx_init(self, *args, **kwargs):
+        kwargs['verify'] = False
+        _orig_httpx_init(self, *args, **kwargs)
+    httpx.Client.__init__ = _patched_httpx_init
+
+    _orig_httpx_async_init = httpx.AsyncClient.__init__
+    def _patched_httpx_async_init(self, *args, **kwargs):
+        kwargs['verify'] = False
+        _orig_httpx_async_init(self, *args, **kwargs)
+    httpx.AsyncClient.__init__ = _patched_httpx_async_init
+except Exception:
+    pass
+
+try:
+    import aiohttp
+    _orig_tcp_init = aiohttp.TCPConnector.__init__
+    def _patched_tcp_init(self, *args, **kwargs):
+        kwargs['ssl'] = False
+        _orig_tcp_init(self, *args, **kwargs)
+        self._ssl = False
+    aiohttp.TCPConnector.__init__ = _patched_tcp_init
+except Exception:
+    pass
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import shutil
-import os
 import tempfile
 from core.zip_processor import extract_and_filter_zip
 from core.diff_engine import run_analysis
@@ -34,7 +90,7 @@ ACTIVE_EXTRACTION_SESSION = {
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], # For development
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -42,8 +98,12 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     import asyncio
-    from core.rag_engine import warmup_rag_engine
-    await asyncio.to_thread(warmup_rag_engine)
+    try:
+        from core.rag_engine import warmup_rag_engine
+        # Run warmup in background so FastAPI server starts instantly without blocking
+        asyncio.create_task(asyncio.to_thread(warmup_rag_engine))
+    except Exception as e:
+        print(f"[Startup] Background warmup init note: {e}")
 
 @app.get("/")
 def read_root():
@@ -100,8 +160,12 @@ async def analyze_packages(
     old_package: UploadFile = File(...),
     new_package: UploadFile = File(...)
 ):
-    if not old_package.filename or not new_package.filename or not old_package.filename.endswith('.zip') or not new_package.filename.endswith('.zip'):
-        raise HTTPException(status_code=400, detail="Değerlendirme için .zip dosyaları gereklidir.")
+    valid_exts = ('.zip', '.rar')
+    old_ext = os.path.splitext(old_package.filename or '')[1].lower()
+    new_ext = os.path.splitext(new_package.filename or '')[1].lower()
+
+    if not old_package.filename or not new_package.filename or old_ext not in valid_exts or new_ext not in valid_exts:
+        raise HTTPException(status_code=400, detail="Değerlendirme için .zip veya .rar dosyaları gereklidir.")
     
     # Read files to compute cache key hash and check max payload limit
     old_content = await old_package.read()
@@ -109,7 +173,7 @@ async def analyze_packages(
     
     MAX_FILE_SIZE = 50 * 1024 * 1024 # 50 MB Limit
     if len(old_content) > MAX_FILE_SIZE or len(new_content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="Yüklenen ZIP paket boyutu çok büyük! Maksimum dosya boyutu 50 MB olmalıdır.")
+        raise HTTPException(status_code=400, detail="Yüklenen paket boyutu çok büyük! Maksimum dosya boyutu 50 MB olmalıdır.")
     
     import hashlib
     old_hash = hashlib.md5(old_content).hexdigest()
@@ -120,11 +184,11 @@ async def analyze_packages(
     cached_response = redis_cache.get(cache_key)
     
     # Save uploaded files temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as old_temp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=old_ext) as old_temp:
         old_temp.write(old_content)
         old_zip_path = old_temp.name
         
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as new_temp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=new_ext) as new_temp:
         new_temp.write(new_content)
         new_zip_path = new_temp.name
         
@@ -201,8 +265,12 @@ async def analyze_packages(
         return response_data
         
     except ValueError as e:
+        print(f"[AnalyzeError] ValueError: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[AnalyzeError] Exception: {e}")
         raise HTTPException(status_code=500, detail=f"İşleme sırasında bir hata oluştu: {str(e)}")
 
 
@@ -311,8 +379,8 @@ async def api_rag_ingest(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Dosya adı okunamadı.")
     filename = file.filename.lower()
-    if not (filename.endswith(".pdf") or filename.endswith(".zip")):
-        raise HTTPException(status_code=400, detail="Lütfen sadece Kılavuz (PDF) veya Kılavuzları içeren bir ZIP arşivi yükleyiniz.")
+    if not (filename.endswith(".pdf") or filename.endswith(".zip") or filename.endswith(".rar")):
+        raise HTTPException(status_code=400, detail="Lütfen sadece Kılavuz (PDF) veya Kılavuzları içeren bir ZIP/RAR arşivi yükleyiniz.")
         
     with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=os.path.splitext(filename)[1]) as tmp:
         content = await file.read()
@@ -320,14 +388,15 @@ async def api_rag_ingest(file: UploadFile = File(...)):
         tmp_path = tmp.name
         
     try:
-        # Backup the uploaded guide (PDF/ZIP) to S3 standard storage or local fallback
+        # Backup the uploaded guide (PDF/ZIP/RAR) to S3 standard storage or local fallback
         from core.storage import storage_service
         storage_service.save_file(content, os.path.join("guides", file.filename))
         
-        if filename.endswith(".zip"):
+        if filename.endswith(".zip") or filename.endswith(".rar"):
             extract_dir = tempfile.mkdtemp()
-            with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
+            from core.zip_processor import uncompress_archive_file, extract_nested_zips
+            uncompress_archive_file(tmp_path, extract_dir)
+            extract_nested_zips(extract_dir)
             
             import asyncio
             chunk_count = await asyncio.to_thread(ingest_directory, extract_dir)
@@ -337,7 +406,7 @@ async def api_rag_ingest(file: UploadFile = File(...)):
             from core.redis_cache import redis_cache
             redis_cache.clear_prefix("rag:chat:")
             
-            return {"status": "success", "message": f"ZIP içindeki PDF'ler başarıyla tarandı ve {chunk_count} parça GİB kuralı veritabanına eğitildi!"}
+            return {"status": "success", "message": f"Arşiv içindeki PDF'ler başarıyla tarandı ve {chunk_count} parça GİB kuralı veritabanına eğitildi!"}
         else:
             import asyncio
             chunk_count = await asyncio.to_thread(ingest_document, tmp_path)

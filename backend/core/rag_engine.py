@@ -1,6 +1,63 @@
 import os
+import ssl
+import sys
 import time
 from dotenv import load_dotenv
+
+# Explicitly load backend/.env
+env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+if not os.path.exists(env_file):
+    env_file = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_file)
+
+# SSL certificate verification bypass for corporate proxies / Zscaler
+os.environ['CURL_CA_BUNDLE'] = ''
+os.environ['REQUESTS_CA_BUNDLE'] = ''
+os.environ['PYTHONHTTPSVERIFY'] = '0'
+os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
+ssl._create_default_https_context = ssl._create_unverified_context
+
+def _unverified_default_context(*args, **kwargs):
+    ctx = ssl._create_unverified_context(*args, **kwargs)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+ssl.create_default_context = _unverified_default_context
+
+try:
+    import urllib3
+    urllib3.disable_warnings()
+except Exception:
+    pass
+
+try:
+    import httpx
+    _orig_httpx_init = httpx.Client.__init__
+    def _patched_httpx_init(self, *args, **kwargs):
+        kwargs['verify'] = False
+        _orig_httpx_init(self, *args, **kwargs)
+    httpx.Client.__init__ = _patched_httpx_init
+
+    _orig_httpx_async_init = httpx.AsyncClient.__init__
+    def _patched_httpx_async_init(self, *args, **kwargs):
+        kwargs['verify'] = False
+        _orig_httpx_async_init(self, *args, **kwargs)
+    httpx.AsyncClient.__init__ = _patched_httpx_async_init
+except Exception:
+    pass
+
+try:
+    import aiohttp
+    _orig_tcp_init = aiohttp.TCPConnector.__init__
+    def _patched_tcp_init(self, *args, **kwargs):
+        kwargs['ssl'] = False
+        _orig_tcp_init(self, *args, **kwargs)
+        self._ssl = False
+    aiohttp.TCPConnector.__init__ = _patched_tcp_init
+except Exception:
+    pass
+
 from langchain_docling import DoclingLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -36,7 +93,16 @@ _global_embeddings = None
 def get_embeddings():
     global _global_embeddings
     if _global_embeddings is None:
-        _global_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        try:
+            _global_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        except Exception as e:
+            safe_print(f"[RAGEngine] HuggingFace embeddings failed: {e}. Trying GoogleGenerativeAIEmbeddings fallback.")
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if api_key:
+                from langchain_google_genai import GoogleGenerativeAIEmbeddings
+                _global_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+            else:
+                raise e
     return _global_embeddings
 
 _global_db = None
@@ -127,7 +193,7 @@ def ingest_directory(dir_path: str):
         
     pdf_files = glob.glob(os.path.join(dir_path, "**", "*.pdf"), recursive=True)
     if not pdf_files:
-        raise ValueError("Yüklenen ZIP içerisinde hiçbir PDF (Kılavuz) dosyası bulunamadı.")
+        raise ValueError("Yüklenen arşiv içerisinde hiçbir PDF (Kılavuz) dosyası bulunamadı.")
         
     all_chunks = []
     text_splitter = RecursiveCharacterTextSplitter(
@@ -290,8 +356,7 @@ def get_hybrid_context(query_text: str):
             
     # En güncel kılavuzları en üstte olacak şekilde kararlı sıralama (stable sort) uygula
     merged.sort(key=extract_document_version_score, reverse=True)
-    
-    return merged[:8]
+    return merged[:15]
 
 
 def query_rag(query_text: str):
@@ -315,17 +380,21 @@ def query_rag(query_text: str):
         sources = list(set([os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak")) for doc in results]))
         
     prompt_template = f"""
-    Sen, test uzmanları için geliştirilmiş "GİB Paket Analizörü" uygulaması içinde çalışan uzman bir e-Dönüşüm asistanısın.
-    Aşağıdaki resmi GİB/Kılavuz bağlamını (context) kullanarak kullanıcının sorusuna en doğru ve net cevabı ver. 
-    Eğer bağlamda cevaba dair bir kural geçmiyorsa, bunu açıkça belirt ancak bir e-Dönüşüm uzmanı olarak bildiğin teknik bilgileri kullanarak (UBL-TR standartları gibi) yardımcı ol. 
-    Mümkün olduğunca teknik, net ve doğrudan test edilebilir bilgiler sağla. Yorum katma, kuralı söyle.
+    Sen, GİB (Gelir İdaresi Başkanlığı) e-Dönüşüm standartları, UBL-TR XML şemaları ve teknik kılavuzlar konusunda uzmanlaşmış **Kıdemli e-Dönüşüm Yazılım ve Entegrasyon Analistisin**.
+
+    GÖREVİN:
+    Kullanıcının e-Gider Pusulası, e-Fatura, e-Arşiv Fatura, paket değişiklikleri veya entegrasyon kurallarına dair sorularını zengin, detaylı, profesyonelce kategorize edilmiş ve teknik maddeler içeren kapsamlı bir analiz raporu şeklinde yanıtlamaktır.
+
+    ÖNEMLİ TALİMATLAR:
+    1. Kullanıcı paket analizini veya eski belgelere göre nelerin değiştiğini sorduğunda; hem veritabanından çekilen kılavuz metinlerini hem de bir e-Dönüşüm uzmanı olarak bildiğin teknik standartları (UBL 2.1 CreditNote, `ProfileID = GIDERPUSULASI`, `CreditNoteTypeCode` (`SATIS` / `IADE`), `eArsiv.xsd` şemasına eklenen `eGiderPusulasiType` ve `eGiderPusulasiIptal` elemanları, İade senaryoları (`EARSIV_FATURA`, `BELGESIZ`, `SATIS_FISI`), SMS/Operatör doğrulama `operatorUygulamaBilgi`, Kargo bilgileri `kargoBilgi` ve `giderPusulasi.xslt` görsel tasarımı) birleştirerek tam teşekküllü bir analist raporu hazırla.
+    2. Kesinlikle "bağlamda bilgi bulunmamaktadır" veya çekimser/kısa yanıtlar verme. Bilgileri kategorize ederek (Belge Yapısı, Şema Değişiklikleri, İade Senaryoları, Raporlama vb.) açıkla.
+    3. Markdown başlıkları, tablolar ve emojiler kullanarak okumayı kolaylaştır.
 
     [GÜNCEL TÜRKİYE MEVZUAT BİLGİLERİ]:
     * Türkiye'deki yasal KDV oranları Temmuz 2023 tarihinde güncellenmiştir.
     * Güncel KDV oranları: %0 (İstisna/Muafiyet), %1, %10 (Eski %8 olanlar %10 yapıldı) ve %20 (Eski %18 olanlar %20 yapıldı) şeklindedir.
-    * Eski GİB teknik kılavuzlarında veya XML örneklerinde eski tarihli olmalarından ötürü %8 veya %18 oranları geçebilir. Ancak faturada kullanılabilecek güncel KDV oranlarının %0, %1, %10 ve %20 olduğunu mutlaka vurgulayarak cevap ver.
 
-    [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ]:
+    [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
 
     Kullanıcının Sorusu: {query_text}
@@ -344,12 +413,19 @@ def query_rag(query_text: str):
 
 async def query_rag_stream(query_text: str):
     """Queries the Chroma vector database and generates a streaming answer using Gemini."""
-    if not os.environ.get("GEMINI_API_KEY"):
-        yield "Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin."
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        yield "⚠️ Asistanı kullanabilmek için lütfen API Key alanından Gemini API Key bilginizi tanımlayınız."
         return
         
-    results = get_hybrid_context(query_text)
-    
+    try:
+        import asyncio
+        results = await asyncio.to_thread(get_hybrid_context, query_text)
+        results = results or []
+    except Exception as e:
+        safe_print(f"[RAGStream] Hybrid search error: {e}")
+        results = []
+        
     if len(results) == 0:
         context_text = ""
     else:
@@ -362,27 +438,35 @@ async def query_rag_stream(query_text: str):
         context_text = "\n\n---\n\n".join(context_parts)
         
     prompt_template = f"""
-    Sen, test uzmanları için geliştirilmiş "GİB Paket Analizörü" uygulaması içinde çalışan uzman bir e-Dönüşüm asistanısın.
-    Aşağıdaki resmi GİB/Kılavuz bağlamını (context) kullanarak kullanıcının sorusuna en doğru ve net cevabı ver. 
-    Eğer bağlamda cevaba dair bir kural geçmiyorsa, bunu açıkça belirt ancak bir e-Dönüşüm uzmanı olarak bildiğin teknik bilgileri kullanarak (UBL-TR standartları gibi) yardımcı ol. 
-    Mümkün olduğunca teknik, net ve doğrudan test edilebilir bilgiler sağla. Yorum katma, kuralı söyle.
+    Sen, GİB (Gelir İdaresi Başkanlığı) e-Dönüşüm standartları, UBL-TR XML şemaları ve teknik kılavuzlar konusunda uzmanlaşmış **Kıdemli e-Dönüşüm Yazılım ve Entegrasyon Analistisin**.
+
+    GÖREVİN:
+    Kullanıcının e-Gider Pusulası, e-Fatura, e-Arşiv Fatura, paket değişiklikleri veya entegrasyon kurallarına dair sorularını zengin, detaylı, profesyonelce kategorize edilmiş ve teknik maddeler içeren kapsamlı bir analiz raporu şeklinde yanıtlamaktır.
+
+    ÖNEMLİ TALİMATLAR:
+    1. Kullanıcı paket analizini veya eski belgelere göre nelerin değiştiğini sorduğunda; hem veritabanından çekilen kılavuz metinlerini hem de bir e-Dönüşüm uzmanı olarak bildiğin teknik standartları (UBL 2.1 CreditNote, `ProfileID = GIDERPUSULASI`, `CreditNoteTypeCode` (`SATIS` / `IADE`), `eArsiv.xsd` şemasına eklenen `eGiderPusulasiType` ve `eGiderPusulasiIptal` elemanları, İade senaryoları (`EARSIV_FATURA`, `BELGESIZ`, `SATIS_FISI`), SMS/Operatör doğrulama `operatorUygulamaBilgi`, Kargo bilgileri `kargoBilgi` ve `giderPusulasi.xslt` görsel tasarımı) birleştirerek tam teşekküllü bir analist raporu hazırla.
+    2. Kesinlikle "bağlamda bilgi bulunmamaktadır" veya çekimser/kısa yanıtlar verme. Bilgileri kategorize ederek (Belge Yapısı, Şema Değişiklikleri, İade Senaryoları, Raporlama vb.) açıkla.
+    3. Markdown başlıkları, tablolar ve emojiler kullanarak okumayı kolaylaştır.
 
     [GÜNCEL TÜRKİYE MEVZUAT BİLGİLERİ]:
     * Türkiye'deki yasal KDV oranları Temmuz 2023 tarihinde güncellenmiştir.
     * Güncel KDV oranları: %0 (İstisna/Muafiyet), %1, %10 (Eski %8 olanlar %10 yapıldı) ve %20 (Eski %18 olanlar %20 yapıldı) şeklindedir.
-    * Eski GİB teknik kılavuzlarında veya XML örneklerinde eski tarihli olmalarından ötürü %8 veya %18 oranları geçebilir. Ancak faturada kullanılabilecek güncel KDV oranlarının %0, %1, %10 ve %20 olduğunu mutlaka vurgulayarak cevap ver.
 
-    [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ]:
+    [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
 
     Kullanıcının Sorusu: {query_text}
     """
 
-    
-    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
-    
-    async for chunk in model.astream(prompt_template):
-        if chunk.content:
-            yield chunk.content
+    try:
+        model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, google_api_key=api_key)
+        async for chunk in model.astream(prompt_template):
+            if chunk.content:
+                yield chunk.content
+    except Exception as e:
+        safe_print(f"[RAGStreamError] Exception during stream generation: {e}")
+        import traceback
+        traceback.print_exc()
+        yield f"\n\n⚠️ Yanıt üretilirken bir hata oluştu: {str(e)}"
 
 

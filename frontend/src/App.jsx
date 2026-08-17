@@ -466,7 +466,7 @@ function App() {
 
   const handleAnalyze = async () => {
     if (!oldFile || !newFile) {
-      setError("Lütfen her iki (eski ve yeni) ZIP paketini de yükleyiniz.");
+      setError("Lütfen her iki (eski ve yeni) ZIP veya RAR paketini de yükleyiniz.");
       return;
     }
 
@@ -705,17 +705,33 @@ function App() {
         });
       }
     } catch (err) {
-      console.error(err);
-      setChatMessages(prev => {
-        const newMessages = [...prev];
-        const lastIndex = newMessages.length - 1;
-        newMessages[lastIndex] = {
+      console.warn("Stream isteği başarısız oldu, standart sohbet uç noktasına geçiliyor...", err);
+      try {
+        const resp = await axios.post('http://localhost:8000/api/rag/chat', formData);
+        const answer = resp.data.data.answer;
+        setChatMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          newMessages[lastIndex] = {
             ...newMessages[lastIndex],
-            text: "Hata: Sunucuya bağlanılamadı veya yayın akışı başlatılamadı."
-        };
-        return newMessages;
-      });
-      setChatLoading(false);
+            text: answer
+          };
+          return newMessages;
+        });
+      } catch (fallbackErr) {
+        console.error(fallbackErr);
+        setChatMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          newMessages[lastIndex] = {
+            ...newMessages[lastIndex],
+            text: fallbackErr.response?.data?.detail || "Hata: Sunucuya bağlanılamadı veya yayın akışı başlatılamadı."
+          };
+          return newMessages;
+        });
+      } finally {
+        setChatLoading(false);
+      }
     }
   };
 
@@ -846,14 +862,14 @@ function App() {
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-sm border border-slate-200 dark:border-slate-800 mb-8 max-w-4xl mx-auto">
             <div className="text-center mb-10">
               <h2 className="text-2xl font-bold mb-2">Karşılaştırma Paketlerini Yükleyin</h2>
-              <p className="text-slate-500 dark:text-slate-400">Gelir İdaresi Başkanlığı tarafından yayınlanan eski ve yeni versiyon XSD/XSLT paketlerini ZIP olarak sisteme yükleyin.</p>
+              <p className="text-slate-500 dark:text-slate-400">Gelir İdaresi Başkanlığı tarafından yayınlanan eski ve yeni versiyon XSD/XSLT paketlerini ZIP veya RAR olarak sisteme yükleyin.</p>
             </div>
 
             <div className="flex gap-6 mb-8">
               <div className="flex-1">
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Mevcut (Eski) Paket (.zip)</label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Mevcut (Eski) Paket (.zip, .rar)</label>
                 <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-8 text-center hover:bg-slate-50 dark:bg-slate-950 hover:border-indigo-400 transition-colors cursor-pointer" onClick={() => document.getElementById('old-file').click()}>
-                  <input id="old-file" type="file" accept=".zip" className="hidden" onChange={(e) => handleFileChange(e, 'old')} />
+                  <input id="old-file" type="file" accept=".zip,.rar" className="hidden" onChange={(e) => handleFileChange(e, 'old')} />
                   <FileArchive className={`w-12 h-12 mx-auto mb-3 ${oldFile ? 'text-indigo-600' : 'text-slate-400'}`} />
                   {oldFile ? (
                     <div>
@@ -867,9 +883,9 @@ function App() {
               </div>
 
               <div className="flex-1">
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Güncel (Yeni) Paket (.zip)</label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Güncel (Yeni) Paket (.zip, .rar)</label>
                 <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-8 text-center hover:bg-slate-50 dark:bg-slate-950 hover:border-indigo-400 transition-colors cursor-pointer" onClick={() => document.getElementById('new-file').click()}>
-                  <input id="new-file" type="file" accept=".zip" className="hidden" onChange={(e) => handleFileChange(e, 'new')} />
+                  <input id="new-file" type="file" accept=".zip,.rar" className="hidden" onChange={(e) => handleFileChange(e, 'new')} />
                   <FileArchive className={`w-12 h-12 mx-auto mb-3 ${newFile ? 'text-indigo-600' : 'text-slate-400'}`} />
                   {newFile ? (
                     <div>
@@ -1124,7 +1140,7 @@ function App() {
                          <BookOpen className="w-8 h-8 text-amber-500 shrink-0" />
                          <div>
                             <h4 className="font-bold text-sm">GİB Resmi Paket Değişiklik Analizi (Yapay Zeka Özeti)</h4>
-                            <p className="text-xs opacity-90 mt-0.5">Bu rapor, yeni ZIP paketi içerisindeki resmi <b>History.txt</b> dosyası analiz edilerek yapay zeka tarafından otomatik oluşturulmuştur.</p>
+                            <p className="text-xs opacity-90 mt-0.5">Bu rapor, yeni ZIP/RAR paketi içerisindeki resmi <b>History.txt</b> dosyası analiz edilerek yapay zeka tarafından otomatik oluşturulmuştur.</p>
                          </div>
                       </div>
                       
@@ -1622,14 +1638,14 @@ function App() {
                    <hr className="border-slate-200 dark:border-slate-800 mb-6" />
 
                    <h3 className="font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-2"><BookOpen className="w-5 h-5 text-indigo-600"/> Asistanı Eğit (Kılavuz Yükle)</h3>
-                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">GİB'in yayınladığı Tekli Kılavuz (PDF) veya Toplu Kılavuzları içeren (ZIP) arşiv yükleyerek yapay zekanın en güncel kuralları topluca öğrenmesini sağlayın.</p>
+                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">GİB'in yayınladığı Tekli Kılavuz (PDF) veya Toplu Kılavuzları içeren (ZIP/RAR) arşiv yükleyerek yapay zekanın en güncel kuralları topluca öğrenmesini sağlayın.</p>
                    
                    <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 text-center hover:bg-slate-100 dark:bg-slate-800 hover:border-indigo-400 transition-colors cursor-pointer mb-4 bg-white dark:bg-slate-900" onClick={() => document.getElementById('pdf-upload').click()}>
-                      <input id="pdf-upload" type="file" accept=".pdf,.zip" className="hidden" onChange={handlePdfChange} />
+                      <input id="pdf-upload" type="file" accept=".pdf,.zip,.rar" className="hidden" onChange={handlePdfChange} />
                       {pdfFile ? (
                          <p className="font-semibold text-indigo-700 text-sm truncate">{pdfFile.name}</p>
                       ) : (
-                         <p className="text-slate-500 dark:text-slate-400 text-sm">PDF Veya ZIP seçmek için tıklayın.</p>
+                         <p className="text-slate-500 dark:text-slate-400 text-sm">PDF, ZIP veya RAR seçmek için tıklayın.</p>
                       )}
                    </div>
                    
