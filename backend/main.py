@@ -7,53 +7,57 @@ from dotenv import load_dotenv
 env_file = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_file)
 
-# Global SSL Certificate Verification Bypass for Corporate Interception Proxies (Zscaler / Fortinet / Corporate CA)
-os.environ['CURL_CA_BUNDLE'] = ''
-os.environ['REQUESTS_CA_BUNDLE'] = ''
-os.environ['PYTHONHTTPSVERIFY'] = '0'
-os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
-ssl._create_default_https_context = ssl._create_unverified_context
+# Optional SSL Certificate Verification Bypass for Corporate Interception Proxies (Zscaler / Fortinet / Corporate CA)
+# Controlled via DISABLE_SSL_VERIFY environment variable (default: false in production, true in local corporate proxy envs)
+DISABLE_SSL_VERIFY = os.environ.get("DISABLE_SSL_VERIFY", "false").lower() in ("true", "1")
 
-def _unverified_default_context(*args, **kwargs):
-    ctx = ssl._create_unverified_context(*args, **kwargs)
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+if DISABLE_SSL_VERIFY:
+    os.environ['CURL_CA_BUNDLE'] = ''
+    os.environ['REQUESTS_CA_BUNDLE'] = ''
+    os.environ['PYTHONHTTPSVERIFY'] = '0'
+    os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
+    ssl._create_default_https_context = ssl._create_unverified_context
 
-ssl.create_default_context = _unverified_default_context
+    def _unverified_default_context(*args, **kwargs):
+        ctx = ssl._create_unverified_context(*args, **kwargs)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
-try:
-    import urllib3
-    urllib3.disable_warnings()
-except Exception:
-    pass
+    ssl.create_default_context = _unverified_default_context
 
-try:
-    import httpx
-    _orig_httpx_init = httpx.Client.__init__
-    def _patched_httpx_init(self, *args, **kwargs):
-        kwargs['verify'] = False
-        _orig_httpx_init(self, *args, **kwargs)
-    httpx.Client.__init__ = _patched_httpx_init
+    try:
+        import urllib3
+        urllib3.disable_warnings()
+    except Exception:
+        pass
 
-    _orig_httpx_async_init = httpx.AsyncClient.__init__
-    def _patched_httpx_async_init(self, *args, **kwargs):
-        kwargs['verify'] = False
-        _orig_httpx_async_init(self, *args, **kwargs)
-    httpx.AsyncClient.__init__ = _patched_httpx_async_init
-except Exception:
-    pass
+    try:
+        import httpx
+        _orig_httpx_init = httpx.Client.__init__
+        def _patched_httpx_init(self, *args, **kwargs):
+            kwargs['verify'] = False
+            _orig_httpx_init(self, *args, **kwargs)
+        httpx.Client.__init__ = _patched_httpx_init
 
-try:
-    import aiohttp
-    _orig_tcp_init = aiohttp.TCPConnector.__init__
-    def _patched_tcp_init(self, *args, **kwargs):
-        kwargs['ssl'] = False
-        _orig_tcp_init(self, *args, **kwargs)
-        self._ssl = False
-    aiohttp.TCPConnector.__init__ = _patched_tcp_init
-except Exception:
-    pass
+        _orig_httpx_async_init = httpx.AsyncClient.__init__
+        def _patched_httpx_async_init(self, *args, **kwargs):
+            kwargs['verify'] = False
+            _orig_httpx_async_init(self, *args, **kwargs)
+        httpx.AsyncClient.__init__ = _patched_httpx_async_init
+    except Exception:
+        pass
+
+    try:
+        import aiohttp
+        _orig_tcp_init = aiohttp.TCPConnector.__init__
+        def _patched_tcp_init(self, *args, **kwargs):
+            kwargs['ssl'] = False
+            _orig_tcp_init(self, *args, **kwargs)
+            self._ssl = False
+        aiohttp.TCPConnector.__init__ = _patched_tcp_init
+    except Exception:
+        pass
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response
 from pydantic import BaseModel
@@ -232,14 +236,6 @@ async def analyze_packages(
         
         # Run Diff Analysis
         diff_results = run_analysis(old_data, new_data)
-        
-        # LOGGING FOR DEBUGGING
-        with open("debug.log", "w", encoding="utf-8") as f:
-            f.write(f"ESKI DOSYALAR: {old_data['files'].keys()}\n")
-            f.write(f"YENI DOSYALAR: {new_data['files'].keys()}\n")
-            f.write(f"DIFF OVERVIEW:\n")
-            for dr in diff_results:
-                f.write(f" - {dr['file']} -> {dr['status']} (Fark Sayisi: {len(dr.get('diff', []))})\n")
 
         # Generate Scenarios based on Diff
         scenario_results = generate_scenarios(diff_results)
@@ -491,26 +487,34 @@ async def api_list_schematrons():
 @app.post("/api/schematron/upload")
 async def api_upload_schematron(file: UploadFile = File(...)):
     """Saves a schematron file to the server/S3 for future use."""
-    if not file.filename or not file.filename.endswith('.sch'):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Dosya adı belirtilmedi.")
+        
+    safe_filename = os.path.basename(file.filename)
+    if not safe_filename.endswith('.sch') or '/' in safe_filename or '\\' in safe_filename:
         raise HTTPException(status_code=400, detail="Lütfen geçerli bir .sch dosyası yükleyiniz.")
         
     try:
         content = await file.read()
         from core.storage import storage_service
-        dest_path = os.path.join(SCHEMATRONS_DIR, file.filename)
+        dest_path = os.path.join(SCHEMATRONS_DIR, safe_filename)
         storage_service.save_file(content, dest_path)
-        return {"status": "success", "message": f"{file.filename} başarıyla kaydedildi."}
+        return {"status": "success", "message": f"{safe_filename} başarıyla kaydedildi."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Kayıt işlemi başarısız: {str(e)}")
 
 @app.delete("/api/schematron/{filename}")
 async def api_delete_schematron(filename: str):
     """Deletes a saved schematron file from local/S3."""
+    safe_filename = os.path.basename(filename)
+    if not safe_filename.endswith('.sch') or '/' in safe_filename or '\\' in safe_filename:
+        raise HTTPException(status_code=400, detail="Geçersiz dosya adı.")
+        
     from core.storage import storage_service
-    dest_path = os.path.join(SCHEMATRONS_DIR, filename)
+    dest_path = os.path.join(SCHEMATRONS_DIR, safe_filename)
     success = storage_service.delete_file(dest_path)
     if success:
-        return {"status": "success", "message": f"{filename} silindi."}
+        return {"status": "success", "message": f"{safe_filename} silindi."}
     raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
 
 @app.post("/api/validate/schematron")
@@ -574,8 +578,6 @@ async def api_sanitize_xml(file: UploadFile = File(...)):
         
     try:
         content = await file.read()
-        with open("debug_uploaded.xml", "wb") as dbg:
-            dbg.write(content)
         sanitized_content = sanitize_ubl_xml(content)
         
         # Try rendering to HTML (it may fail if XSLT is not embedded, we don't block XML generation though)
@@ -644,7 +646,10 @@ def api_get_reconcile_companies(
     is_connected = connector.connect()
     
     if not is_connected:
-        return ["KOLAY_GÖRKEM", "MİKRO_GÖRKEM", "MİKRO_TEST", "ZED-10185"]
+        raise HTTPException(
+            status_code=400, 
+            detail=f"'{server}' SQL Server veritabanına bağlanılamadı. Lütfen sunucu adı ve kimlik bilgilerinizi kontrol ediniz."
+        )
         
     try:
         query = "SELECT name FROM sys.databases"
@@ -675,7 +680,10 @@ def api_get_reconcile_years(
     is_connected = connector.connect()
     
     if not is_connected:
-        return ["2026", "2025"]
+        raise HTTPException(
+            status_code=400, 
+            detail=f"'{server}' SQL Server veritabanına bağlanılamadı. Yıl bilgileri çekilemedi."
+        )
         
     try:
         query = "SELECT name FROM sys.databases"
@@ -730,5 +738,7 @@ async def api_reconcile_invoice(
             os.remove(tmp_path)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host=host, port=port, reload=True)
 

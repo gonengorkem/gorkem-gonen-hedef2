@@ -109,9 +109,9 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
     is_connected = connector.connect()
     
     # 3. Pull SQL Data
-    # Fetch invoice header (EVRAKNO is the column name in Zirve)
-    header_query = f"SELECT * FROM dbo.FATURA WHERE EVRAKNO = '{invoice_no}'"
-    header_records = connector.execute_query(header_query)
+    # Fetch invoice header (EVRAKNO is the column name in Zirve) - Parameterized query
+    header_query = "SELECT * FROM dbo.FATURA WHERE EVRAKNO = ?"
+    header_records = connector.execute_query(header_query, (invoice_no,))
     
     if is_connected and not header_records:
         connector.close()
@@ -120,22 +120,22 @@ def run_reconciliation(xml_path: str, server: str, company_code: str, year: str,
             "message": f"'{invoice_no}' numaralı fatura '{db_name}' veritabanında bulunamadı. Lütfen masaüstü programından faturanın kaydedildiğinden emin olun."
         }
         
-    # Fetch invoice lines (linked via EVRAKNO)
-    lines_query = f"SELECT * FROM dbo.FATURA_ALT WHERE EVRAKNO = '{invoice_no}'"
-    lines_records = connector.execute_query(lines_query)
+    # Fetch invoice lines (linked via EVRAKNO) - Parameterized query
+    lines_query = "SELECT * FROM dbo.FATURA_ALT WHERE EVRAKNO = ?"
+    lines_records = connector.execute_query(lines_query, (invoice_no,))
     
-    # Fetch IDIS details for all lines of this invoice
+    # Fetch IDIS details for all lines of this invoice - Parameterized query
     idis_records = []
     if lines_records:
-        satir_pids = [f"'{r.get('SATIRP_ID')}'" for r in lines_records if r.get('SATIRP_ID')]
+        satir_pids = [r.get('SATIRP_ID') for r in lines_records if r.get('SATIRP_ID')]
         if satir_pids:
-            pids_str = ",".join(satir_pids)
-            idis_query = f"SELECT * FROM dbo.tbFaturaDetayIDIS WHERE FaturaAltPID IN ({pids_str})"
-            idis_records = connector.execute_query(idis_query)
+            placeholders = ",".join(["?"] * len(satir_pids))
+            idis_query = f"SELECT * FROM dbo.tbFaturaDetayIDIS WHERE FaturaAltPID IN ({placeholders})"
+            idis_records = connector.execute_query(idis_query, satir_pids)
             
-    # Fetch global company info from zirvegenel.dbo.FirmalarListesi (using klavuz)
-    company_query = f"SELECT * FROM zirvegenel.dbo.FirmalarListesi WHERE klavuz = '{company_code}'"
-    company_records = connector.execute_query(company_query)
+    # Fetch global company info from zirvegenel.dbo.FirmalarListesi (using klavuz) - Parameterized query
+    company_query = "SELECT * FROM zirvegenel.dbo.FirmalarListesi WHERE klavuz = ?"
+    company_records = connector.execute_query(company_query, (company_code,))
     
     # Close connection
     connector.close()

@@ -38,6 +38,8 @@ function ChatInputBox({ onSend, loading }) {
   );
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 function App() {
   const [oldFile, setOldFile] = useState(null);
   const [newFile, setNewFile] = useState(null);
@@ -141,7 +143,7 @@ function App() {
       formData.append('search_text', searchText);
       
       try {
-          const response = await axios.post('http://localhost:8000/api/xray', formData);
+          const response = await axios.post(`${API_BASE}/api/xray`, formData);
           if (response.data.status === 'success') {
               const matchedResults = response.data.data;
               setXrayResults(matchedResults);
@@ -231,7 +233,7 @@ function App() {
     formData.append('file', targetFile);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/render', formData);
+      const response = await axios.post(`${API_BASE}/api/render`, formData);
       setXrayResult(response.data.data);
     } catch (err) {
       setXrayError(err.response?.data?.detail || "Sunucu ile iletişim hatası veya fatura görselleştirme sorunu.");
@@ -275,7 +277,7 @@ function App() {
     if (reconConfig.password) formData.append("password", reconConfig.password);
 
     try {
-      const response = await axios.post("http://localhost:8000/api/reconcile/companies", formData);
+      const response = await axios.post(`${API_BASE}/api/reconcile/companies`, formData);
       setReconCompanies(response.data);
       if (response.data.length > 0) {
         const firstComp = response.data[0];
@@ -298,7 +300,7 @@ function App() {
     if (reconConfig.password) formData.append("password", reconConfig.password);
 
     try {
-      const response = await axios.post("http://localhost:8000/api/reconcile/years", formData);
+      const response = await axios.post(`${API_BASE}/api/reconcile/years`, formData);
       setReconYears(response.data);
       if (response.data.length > 0) {
         setReconConfig(prev => ({ ...prev, year: response.data[0] }));
@@ -332,7 +334,7 @@ function App() {
     if (reconConfig.password) formData.append("password", reconConfig.password);
     
     try {
-      const response = await axios.post("http://localhost:8000/api/reconcile", formData, {
+      const response = await axios.post(`${API_BASE}/api/reconcile`, formData, {
         headers: {
           "Content-Type": "multipart/form-data"
         }
@@ -388,7 +390,7 @@ function App() {
   const handleViewCodeDiff = async (filePath) => {
     setDiffModal(prev => ({ ...prev, isOpen: true, fileName: filePath, diffLines: [], loading: true, error: '' }));
     try {
-      const response = await axios.get(`http://localhost:8000/api/diff/file?file_path=${encodeURIComponent(filePath)}`);
+      const response = await axios.get(`${API_BASE}/api/diff/file?file_path=${encodeURIComponent(filePath)}`);
       setDiffModal(prev => ({
         ...prev,
         loading: false,
@@ -414,7 +416,7 @@ function App() {
   const [selectedSchFilename, setSelectedSchFilename] = useState("");
 
   const fetchSavedSchematrons = () => {
-     axios.get('http://localhost:8000/api/schematron/list')
+     axios.get(`${API_BASE}/api/schematron/list`)
       .then(res => {
           const files = res.data.data;
           setSavedSchematrons(files);
@@ -426,7 +428,7 @@ function App() {
   };
 
   useEffect(() => {
-    axios.get('http://localhost:8000/api/settings/apikey/status')
+    axios.get(`${API_BASE}/api/settings/apikey/status`)
       .then(res => setIsApiKeySaved(res.data.hasKey))
       .catch(err => console.error(err));
       
@@ -480,7 +482,7 @@ function App() {
     formData.append('new_package', newFile);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/analyze', formData, {
+      const response = await axios.post(`${API_BASE}/api/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setResults(response.data.data);
@@ -496,7 +498,7 @@ function App() {
     const formData = new FormData();
     formData.append('file', schSchFile);
     try {
-        await axios.post('http://localhost:8000/api/schematron/upload', formData);
+        await axios.post(`${API_BASE}/api/schematron/upload`, formData);
         fetchSavedSchematrons();
         setSelectedSchFilename(schSchFile.name);
         setSchSchFile(null);
@@ -528,7 +530,7 @@ function App() {
     }
 
     try {
-      const response = await axios.post('http://localhost:8000/api/validate/schematron', formData, {
+      const response = await axios.post(`${API_BASE}/api/validate/schematron`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setSchResults(response.data.data);
@@ -551,7 +553,7 @@ function App() {
     formData.append('file', sanFile);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/sanitize/xml', formData);
+      const response = await axios.post(`${API_BASE}/api/sanitize/xml`, formData);
       setSanResult(response.data.data);
     } catch (err) {
       setSanError(err.response?.data?.detail || "Sunucu ile iletişim hatası veya maskeleme sorunu.");
@@ -612,7 +614,7 @@ function App() {
     }, 450);
 
     try {
-      const resp = await axios.post('http://localhost:8000/api/rag/ingest', formData, {
+      const resp = await axios.post(`${API_BASE}/api/rag/ingest`, formData, {
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           setUploadProgress(percentCompleted);
@@ -650,7 +652,7 @@ function App() {
     formData.append('query', userMsg);
     
     try {
-      const resp = await axios.post('http://localhost:8000/api/rag/chat', formData);
+      const resp = await axios.post(`${API_BASE}/api/rag/chat`, formData);
       const answer = resp.data.data.answer;
       setChatMessages(prev => [...prev, {role: 'bot', text: answer}]);
     } catch (err) {
@@ -674,7 +676,7 @@ function App() {
     formData.append('query', userMsg);
     
     try {
-      const response = await fetch('http://localhost:8000/api/rag/chat/stream', {
+      const response = await fetch(`${API_BASE}/api/rag/chat/stream`, {
         method: 'POST',
         body: formData,
       });
@@ -707,7 +709,7 @@ function App() {
     } catch (err) {
       console.warn("Stream isteği başarısız oldu, standart sohbet uç noktasına geçiliyor...", err);
       try {
-        const resp = await axios.post('http://localhost:8000/api/rag/chat', formData);
+        const resp = await axios.post(`${API_BASE}/api/rag/chat`, formData);
         const answer = resp.data.data.answer;
         setChatMessages(prev => {
           const newMessages = [...prev];
@@ -742,7 +744,7 @@ function App() {
     const formData = new FormData();
     formData.append('key', geminiKey.trim());
     try {
-      const resp = await axios.post('http://localhost:8000/api/settings/apikey', formData);
+      const resp = await axios.post(`${API_BASE}/api/settings/apikey`, formData);
       setIsApiKeySaved(true);
       setGeminiKey('');
       showPremiumModal('success', 'API Anahtarı Aktif', resp.data.message);
@@ -1345,6 +1347,7 @@ function App() {
                     {sanResult.html_preview && !sanResult.html_preview.includes('Önizleme Oluşturulamadı') ? (
                          <iframe 
                             srcDoc={sanResult.html_preview}
+                            sandbox=""
                             className="w-full h-[600px] border-none bg-white"
                             title="XSLT Preview"
                          />

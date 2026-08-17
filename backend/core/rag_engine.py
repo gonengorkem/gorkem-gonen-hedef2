@@ -10,53 +10,56 @@ if not os.path.exists(env_file):
     env_file = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_file)
 
-# SSL certificate verification bypass for corporate proxies / Zscaler
-os.environ['CURL_CA_BUNDLE'] = ''
-os.environ['REQUESTS_CA_BUNDLE'] = ''
-os.environ['PYTHONHTTPSVERIFY'] = '0'
-os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
-ssl._create_default_https_context = ssl._create_unverified_context
+# Optional SSL Certificate Verification Bypass for Corporate Interception Proxies (Zscaler / Fortinet / Corporate CA)
+DISABLE_SSL_VERIFY = os.environ.get("DISABLE_SSL_VERIFY", "false").lower() in ("true", "1")
 
-def _unverified_default_context(*args, **kwargs):
-    ctx = ssl._create_unverified_context(*args, **kwargs)
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+if DISABLE_SSL_VERIFY:
+    os.environ['CURL_CA_BUNDLE'] = ''
+    os.environ['REQUESTS_CA_BUNDLE'] = ''
+    os.environ['PYTHONHTTPSVERIFY'] = '0'
+    os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
+    ssl._create_default_https_context = ssl._create_unverified_context
 
-ssl.create_default_context = _unverified_default_context
+    def _unverified_default_context(*args, **kwargs):
+        ctx = ssl._create_unverified_context(*args, **kwargs)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
-try:
-    import urllib3
-    urllib3.disable_warnings()
-except Exception:
-    pass
+    ssl.create_default_context = _unverified_default_context
 
-try:
-    import httpx
-    _orig_httpx_init = httpx.Client.__init__
-    def _patched_httpx_init(self, *args, **kwargs):
-        kwargs['verify'] = False
-        _orig_httpx_init(self, *args, **kwargs)
-    httpx.Client.__init__ = _patched_httpx_init
+    try:
+        import urllib3
+        urllib3.disable_warnings()
+    except Exception:
+        pass
 
-    _orig_httpx_async_init = httpx.AsyncClient.__init__
-    def _patched_httpx_async_init(self, *args, **kwargs):
-        kwargs['verify'] = False
-        _orig_httpx_async_init(self, *args, **kwargs)
-    httpx.AsyncClient.__init__ = _patched_httpx_async_init
-except Exception:
-    pass
+    try:
+        import httpx
+        _orig_httpx_init = httpx.Client.__init__
+        def _patched_httpx_init(self, *args, **kwargs):
+            kwargs['verify'] = False
+            _orig_httpx_init(self, *args, **kwargs)
+        httpx.Client.__init__ = _patched_httpx_init
 
-try:
-    import aiohttp
-    _orig_tcp_init = aiohttp.TCPConnector.__init__
-    def _patched_tcp_init(self, *args, **kwargs):
-        kwargs['ssl'] = False
-        _orig_tcp_init(self, *args, **kwargs)
-        self._ssl = False
-    aiohttp.TCPConnector.__init__ = _patched_tcp_init
-except Exception:
-    pass
+        _orig_httpx_async_init = httpx.AsyncClient.__init__
+        def _patched_httpx_async_init(self, *args, **kwargs):
+            kwargs['verify'] = False
+            _orig_httpx_async_init(self, *args, **kwargs)
+        httpx.AsyncClient.__init__ = _patched_httpx_async_init
+    except Exception:
+        pass
+
+    try:
+        import aiohttp
+        _orig_tcp_init = aiohttp.TCPConnector.__init__
+        def _patched_tcp_init(self, *args, **kwargs):
+            kwargs['ssl'] = False
+            _orig_tcp_init(self, *args, **kwargs)
+            self._ssl = False
+        aiohttp.TCPConnector.__init__ = _patched_tcp_init
+    except Exception:
+        pass
 
 from langchain_docling import DoclingLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter

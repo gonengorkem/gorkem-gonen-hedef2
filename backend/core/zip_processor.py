@@ -7,17 +7,28 @@ import subprocess
 TARGET_EXTENSIONS = {'.xsd', '.xslt', '.xml', '.sch'}
 ARCHIVE_EXTENSIONS = ('.zip', '.rar')
 
+def safe_extract_zip(zip_ref: zipfile.ZipFile, target_dir: str):
+    """
+    Zip Slip saldırılarına karşı her dosya yolunu doğrular ve güvenli şekilde çıkarır.
+    """
+    target_dir_abs = os.path.abspath(target_dir)
+    for member in zip_ref.infolist():
+        dest_path = os.path.abspath(os.path.join(target_dir_abs, member.filename))
+        if not (dest_path == target_dir_abs or dest_path.startswith(target_dir_abs + os.sep)):
+            raise ValueError(f"Güvenlik uyarısı: Zip Slip tespit edildi! Geçersiz dosya yolu: {member.filename}")
+        zip_ref.extract(member, target_dir_abs)
+
 def uncompress_archive_file(archive_filepath: str, target_dir: str):
     """
-    ZIP ve RAR arşivlerini extract eder.
-    ZIP için standart zipfile kütüphanesini kullanır, yedek olarak veya .rar için Windows'ta dahili bsdtar (tar) komutunu çalıştırır.
+    ZIP ve RAR arşivlerini güvenli şekilde extract eder.
+    ZIP için standart zipfile kütüphanesini ve Zip Slip denetimini kullanır.
     """
     ext = os.path.splitext(archive_filepath)[1].lower()
     
     if ext == '.zip':
         try:
             with zipfile.ZipFile(archive_filepath, 'r') as zip_ref:
-                zip_ref.extractall(target_dir)
+                safe_extract_zip(zip_ref, target_dir)
             return
         except (zipfile.BadZipFile, Exception):
             pass  # Fallback to tar if zipfile fails
@@ -61,7 +72,6 @@ def extract_and_filter_zip(zip_filepath: str) -> dict:
     os.makedirs(extraction_dir, exist_ok=True)
     
     extracted_files = {}
-    all_files_debug = []
     
     try:
         uncompress_archive_file(zip_filepath, extraction_dir)
@@ -71,19 +81,11 @@ def extract_and_filter_zip(zip_filepath: str) -> dict:
             
         for root, _, files in os.walk(extraction_dir):
             for file in files:
-                all_files_debug.append(file)
                 ext = os.path.splitext(file)[1].lower()
                 if ext in TARGET_EXTENSIONS:
                     abs_path = os.path.join(root, file)
                     rel_path = os.path.basename(file)
                     extracted_files[rel_path] = abs_path
-                    
-        with open("debug_files.log", "a", encoding="utf-8") as f:
-            f.write(f"\n--- YUKLENEN ARSIV ISLENDI ---\n")
-            f.write(f"Arsiv Yolu: {zip_filepath}\n")
-            f.write(f"Icerisindeki TUM Dosyalar ({len(all_files_debug)} adet): \n")
-            for debug_file in all_files_debug:
-                f.write(f"  > {debug_file}\n")
             
     except Exception as e:
         raise ValueError(f"Geçersiz veya okunamayan ZIP/RAR arşiv formatı: {zip_filepath} ({str(e)})")
