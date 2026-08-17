@@ -395,7 +395,7 @@ async def api_rag_ingest(file: UploadFile = File(...)):
     try:
         # Backup the uploaded guide (PDF/ZIP/RAR) to S3 standard storage or local fallback
         from core.storage import storage_service
-        storage_service.save_file(content, os.path.join("guides", file.filename))
+        storage_service.save_file(content, os.path.join("guides", os.path.basename(file.filename)))
         
         if filename.endswith(".zip") or filename.endswith(".rar"):
             extract_dir = tempfile.mkdtemp()
@@ -489,12 +489,30 @@ async def api_rag_explain_diff(
 async def api_save_key(key: str = Form(...)):
     import os
     env_path = os.path.join(os.path.dirname(__file__), ".env")
-    
+
+    if "\n" in key or "\r" in key or '"' in key:
+        raise HTTPException(status_code=400, detail="API Key geçersiz karakter içeriyor (tırnak veya satır sonu kullanılamaz).")
+
     try:
-        # Save to .env file permanently
+        # Mevcut .env satırlarını koruyarak sadece GEMINI_API_KEY satırını güncelle/ekle
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        new_line = f'GEMINI_API_KEY="{key}"\n'
+        replaced = False
+        for i, line in enumerate(lines):
+            if line.strip().startswith("GEMINI_API_KEY="):
+                lines[i] = new_line
+                replaced = True
+                break
+        if not replaced:
+            lines.append(new_line)
+
         with open(env_path, "w", encoding="utf-8") as f:
-            f.write(f'GEMINI_API_KEY="{key}"\n')
-            
+            f.writelines(lines)
+
         # Apply to running process immediately
         os.environ["GEMINI_API_KEY"] = key
         

@@ -70,8 +70,10 @@ def extract_nested_zips(extraction_dir: str):
                         os.remove(nested_archive_path) # Extracted archives can be removed
                         found_nested = True
                         break # break to avoid mutating the os.walk iterator
+                    except ValueError:
+                        raise # Zip Slip / Path Traversal tespiti: yutma, işlemi kes
                     except Exception:
-                        pass # Silently ignore bad nested archives
+                        pass # Bozuk/desteklenmeyen iç içe arşivleri sessizce atla
             if found_nested:
                 break # Restart os.walk since directory structure changed
 

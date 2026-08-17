@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 # Try to import pyodbc for SQL Server connectivity
@@ -8,6 +9,11 @@ try:
     HAS_PYODBC = True
 except ImportError:
     pass
+
+
+def _redact_secrets(text: str) -> str:
+    """Bazı ODBC sürücüleri hata mesajına bağlantı dizesini gömebiliyor; loglamadan önce PWD alanını maskele."""
+    return re.sub(r"(?i)PWD=[^;]*", "PWD=***", text)
 
 class DBConnector:
     def __init__(self, server=None, database=None, username=None, password=None, trusted=True):
@@ -35,7 +41,7 @@ class DBConnector:
             print(f"[DBConnector] Connected to SQL Server database: {self.database}")
             return True
         except Exception as e:
-            print(f"[DBConnector] Connection to SQL Server failed: {str(e)}. Running in MOCK mode.")
+            print(f"[DBConnector] Connection to SQL Server failed: {_redact_secrets(str(e))}. Running in MOCK mode.")
             self.connection = None
             self.cursor = None
             return False
@@ -58,7 +64,7 @@ class DBConnector:
                     results.append(dict(zip(columns, row)))
                 return results
             except Exception as e:
-                print(f"[DBConnector] Query execution failed: {str(e)}")
+                print(f"[DBConnector] Query execution failed: {_redact_secrets(str(e))}")
                 return []
         else:
             return self._get_mock_data(query, params)
