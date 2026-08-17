@@ -459,6 +459,21 @@ async def api_rag_chat_stream(query: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/rag/explain-diff")
+async def api_rag_explain_diff(
+    element_name: str = Form(...),
+    diff_type: str = Form("added"),
+    file_name: str = Form("")
+):
+    """Explains a schema difference using relevant passages from ingested GİB PDF guides."""
+    try:
+        from core.rag_engine import explain_diff_with_rag
+        import asyncio
+        res = await asyncio.to_thread(explain_diff_with_rag, element_name, diff_type, file_name)
+        return {"status": "success", "data": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/settings/apikey")
 async def api_save_key(key: str = Form(...)):
     import os

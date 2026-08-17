@@ -153,8 +153,10 @@ def ingest_document(file_path: str):
         
     from langchain_community.document_loaders import PyPDFLoader
     loader = PyPDFLoader(file_path)
-    pages = loader.load()
-    
+    meta_info = extract_metadata_from_path(file_path)
+    for p in pages:
+        p.metadata.update(meta_info)
+        
     # Bölütleme (Chunking) ayarları: Belgeleri LLM'in anlayacağı kısalıkta dilimlere ayırır.
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1200,
@@ -212,6 +214,9 @@ def ingest_directory(dir_path: str):
             safe_print(f"PyPDF ile okunuyor: {pdf}")
             loader = PyPDFLoader(pdf)
             pages = loader.load()
+            meta_info = extract_metadata_from_path(pdf)
+            for p in pages:
+                p.metadata.update(meta_info)
             chunks = text_splitter.split_documents(pages)
             all_chunks.extend(chunks)
         except Exception as e:
@@ -362,8 +367,37 @@ def get_hybrid_context(query_text: str):
     return merged[:15]
 
 
+def extract_metadata_from_path(file_path: str) -> dict:
+    """Extracts semantic document metadata like version, type, and title from filename."""
+    filename = os.path.basename(file_path)
+    score = extract_document_version_score(filename)
+    ver_str = f"v{score[0]}.{score[1]}" if score[0] > 0 else ""
+    
+    doc_type = "GİB Teknik Kılavuzu"
+    fn_lower = filename.lower()
+    if "gider" in fn_lower or "pusula" in fn_lower:
+        doc_type = "e-Gider Pusulası Kılavuzu"
+    elif "arsiv" in fn_lower or "arşiv" in fn_lower:
+        doc_type = "e-Arşiv Fatura Kılavuzu"
+    elif "fatura" in fn_lower:
+        doc_type = "e-Fatura Kılavuzu"
+    elif "irsaliye" in fn_lower:
+        doc_type = "e-İrsaliye Kılavuzu"
+    elif "bilet" in fn_lower:
+        doc_type = "e-Bilet Kılavuzu"
+    elif "mustahsil" in fn_lower:
+        doc_type = "e-Müstahsil Makbuzu Kılavuzu"
+        
+    return {
+        "source": filename,
+        "doc_title": os.path.splitext(filename)[0],
+        "doc_version": ver_str,
+        "doc_type": doc_type,
+        "doc_year": score[3] if score[3] > 0 else 2026
+    }
+
 def query_rag(query_text: str):
-    """Queries the Chroma vector database and generates an answer using Gemini."""
+    """Queries the Chroma vector database and generates a high-trust grounded answer using Gemini."""
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
@@ -372,26 +406,41 @@ def query_rag(query_text: str):
     if len(results) == 0:
         context_text = ""
         sources = []
+        structured_sources = []
     else:
         context_parts = []
+        structured_sources = []
+        seen_src = set()
         for doc in results:
             src_name = os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak"))
             page_num = doc.metadata.get("page", 0) + 1
-            part_content = f"[Kaynak: {src_name}, Sayfa: {page_num}]\n{doc.page_content}"
+            doc_type = doc.metadata.get("doc_type", "GİB Kılavuzu")
+            part_content = f"[Kaynak: {src_name} ({doc_type}), Sayfa: {page_num}]\n{doc.page_content}"
             context_parts.append(part_content)
+            
+            src_key = f"{src_name}_{page_num}"
+            if src_key not in seen_src:
+                seen_src.add(src_key)
+                structured_sources.append({
+                    "title": src_name,
+                    "page": page_num,
+                    "type": doc_type,
+                    "snippet": doc.page_content[:180].strip()
+                })
+                
         context_text = "\n\n---\n\n".join(context_parts)
         sources = list(set([os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak")) for doc in results]))
         
     prompt_template = f"""
-    Sen, GİB (Gelir İdaresi Başkanlığı) e-Dönüşüm standartları, UBL-TR XML şemaları ve teknik kılavuzlar konusunda uzmanlaşmış **Kıdemli e-Dönüşüm Yazılım ve Entegrasyon Analistisin**.
+    Sen, Gelir İdaresi Başkanlığı (GİB) e-Dönüşüm standartları, UBL-TR XML şemaları ve entegrasyon kuralları konusunda uzmanlaşmış **Kıdemli Mevzuat ve Sistem Analistisin**.
 
     GÖREVİN:
-    Kullanıcının e-Gider Pusulası, e-Fatura, e-Arşiv Fatura, paket değişiklikleri veya entegrasyon kurallarına dair sorularını zengin, detaylı, profesyonelce kategorize edilmiş ve teknik maddeler içeren kapsamlı bir analiz raporu şeklinde yanıtlamaktır.
+    Yazılım geliştiricilerin ve iş analistlerinin yüzlerce sayfalık GİB teknik kılavuzlarını okumasına gerek kalmadan; e-Gider Pusulası, e-Arşiv Fatura, e-Fatura, XML şema değişiklikleri ve entegrasyon kurallarına dair sorularını **en yüksek doğruluk ve güvenilirlikle** yanıtlamaktır.
 
-    ÖNEMLİ TALİMATLAR:
-    1. Kullanıcı paket analizini veya eski belgelere göre nelerin değiştiğini sorduğunda; hem veritabanından çekilen kılavuz metinlerini hem de bir e-Dönüşüm uzmanı olarak bildiğin teknik standartları (UBL 2.1 CreditNote, `ProfileID = GIDERPUSULASI`, `CreditNoteTypeCode` (`SATIS` / `IADE`), `eArsiv.xsd` şemasına eklenen `eGiderPusulasiType` ve `eGiderPusulasiIptal` elemanları, İade senaryoları (`EARSIV_FATURA`, `BELGESIZ`, `SATIS_FISI`), SMS/Operatör doğrulama `operatorUygulamaBilgi`, Kargo bilgileri `kargoBilgi` ve `giderPusulasi.xslt` görsel tasarımı) birleştirerek tam teşekküllü bir analist raporu hazırla.
-    2. Kesinlikle "bağlamda bilgi bulunmamaktadır" veya çekimser/kısa yanıtlar verme. Bilgileri kategorize ederek (Belge Yapısı, Şema Değişiklikleri, İade Senaryoları, Raporlama vb.) açıkla.
-    3. Markdown başlıkları, tablolar ve emojiler kullanarak okumayı kolaylaştır.
+    TEMEL İLKELER & GÜVENİLİRLİK KURALLARI:
+    1. **Kesin Doğruluk (Ground Truth):** Yanıtını öncelikle aşağıdaki [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ] içeriğindeki resmi metinlere dayandır. Bilgileri verirken ilgili kılavuz adına ve sayfa/madde numarasına açıkça atıfta bulun.
+    2. **Şeffaf Ayrım (Halüsinasyon Yasağı):** Sorulan kural veya detay sağlanan kılavuz parçalarında yer almıyorsa, kesinlikle uydurma kural veya tahmin üretme. *"Bu detay sistemde yüklü olan kılavuz sayfalarında açıkça yer almamaktadır; genel UBL 2.1 standardına göre..."* şeklinde şeffaf bir ayrım belirt.
+    3. **Yapılandırılmış Format:** Analistlerin hızla test senaryosu ve iş kuralı çıkarabilmesi için cevabını net başlıklar, maddeler ve teknik XML/XPath örnekleri ile sun.
 
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
@@ -405,13 +454,14 @@ def query_rag(query_text: str):
     
     return {
         "answer": response.content,
-        "sources": sources
+        "sources": sources,
+        "structured_sources": structured_sources
     }
 
 
 
 async def query_rag_stream(query_text: str):
-    """Queries the Chroma vector database and generates a streaming answer using Gemini."""
+    """Queries the Chroma vector database and generates a streaming answer using Gemini with footnotes."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         yield "⚠️ Asistanı kullanabilmek için lütfen API Key alanından Gemini API Key bilginizi tanımlayınız."
@@ -425,27 +475,36 @@ async def query_rag_stream(query_text: str):
         safe_print(f"[RAGStream] Hybrid search error: {e}")
         results = []
         
+    citations = []
     if len(results) == 0:
         context_text = ""
     else:
         context_parts = []
+        seen = set()
         for doc in results:
             src_name = os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak"))
             page_num = doc.metadata.get("page", 0) + 1
-            part_content = f"[Kaynak: {src_name}, Sayfa: {page_num}]\n{doc.page_content}"
+            doc_type = doc.metadata.get("doc_type", "GİB Kılavuzu")
+            part_content = f"[Kaynak: {src_name} ({doc_type}), Sayfa: {page_num}]\n{doc.page_content}"
             context_parts.append(part_content)
+            
+            key = f"{src_name}_{page_num}"
+            if key not in seen and len(citations) < 4:
+                seen.add(key)
+                citations.append(f"📄 **{src_name}** — Sayfa {page_num}")
+                
         context_text = "\n\n---\n\n".join(context_parts)
         
     prompt_template = f"""
-    Sen, GİB (Gelir İdaresi Başkanlığı) e-Dönüşüm standartları, UBL-TR XML şemaları ve teknik kılavuzlar konusunda uzmanlaşmış **Kıdemli e-Dönüşüm Yazılım ve Entegrasyon Analistisin**.
+    Sen, Gelir İdaresi Başkanlığı (GİB) e-Dönüşüm standartları, UBL-TR XML şemaları ve entegrasyon kuralları konusunda uzmanlaşmış **Kıdemli Mevzuat ve Sistem Analistisin**.
 
     GÖREVİN:
-    Kullanıcının e-Gider Pusulası, e-Fatura, e-Arşiv Fatura, paket değişiklikleri veya entegrasyon kurallarına dair sorularını zengin, detaylı, profesyonelce kategorize edilmiş ve teknik maddeler içeren kapsamlı bir analiz raporu şeklinde yanıtlamaktır.
+    Yazılım geliştiricilerin ve iş analistlerinin yüzlerce sayfalık GİB teknik kılavuzlarını okumasına gerek kalmadan; e-Gider Pusulası, e-Arşiv Fatura, e-Fatura, XML şema değişiklikleri ve entegrasyon kurallarına dair sorularını **en yüksek doğruluk ve güvenilirlikle** yanıtlamaktır.
 
-    ÖNEMLİ TALİMATLAR:
-    1. Kullanıcı paket analizini veya eski belgelere göre nelerin değiştiğini sorduğunda; hem veritabanından çekilen kılavuz metinlerini hem de bir e-Dönüşüm uzmanı olarak bildiğin teknik standartları (UBL 2.1 CreditNote, `ProfileID = GIDERPUSULASI`, `CreditNoteTypeCode` (`SATIS` / `IADE`), `eArsiv.xsd` şemasına eklenen `eGiderPusulasiType` ve `eGiderPusulasiIptal` elemanları, İade senaryoları (`EARSIV_FATURA`, `BELGESIZ`, `SATIS_FISI`), SMS/Operatör doğrulama `operatorUygulamaBilgi`, Kargo bilgileri `kargoBilgi` ve `giderPusulasi.xslt` görsel tasarımı) birleştirerek tam teşekküllü bir analist raporu hazırla.
-    2. Kesinlikle "bağlamda bilgi bulunmamaktadır" veya çekimser/kısa yanıtlar verme. Bilgileri kategorize ederek (Belge Yapısı, Şema Değişiklikleri, İade Senaryoları, Raporlama vb.) açıkla.
-    3. Markdown başlıkları, tablolar ve emojiler kullanarak okumayı kolaylaştır.
+    TEMEL İLKELER & GÜVENİLİRLİK KURALLARI:
+    1. **Kesin Doğruluk (Ground Truth):** Yanıtını öncelikle aşağıdaki [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ] içeriğindeki resmi metinlere dayandır.
+    2. **Şeffaf Ayrım (Halüsinasyon Yasağı):** Sorulan kural veya detay sağlanan kılavuz parçalarında yer almıyorsa, kesinlikle uydurma kural veya tahmin üretme. *"Bu detay sistemde yüklü olan kılavuz sayfalarında açıkça yer almamaktadır..."* şeklinde şeffaf bir ayrım belirt.
+    3. **Yapılandırılmış Format:** Analistlerin hızla test senaryosu ve iş kuralı çıkarabilmesi için cevabını net başlıklar, maddeler ve teknik XML/XPath örnekleri ile sun.
 
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
@@ -458,10 +517,75 @@ async def query_rag_stream(query_text: str):
         async for chunk in model.astream(prompt_template):
             if chunk.content:
                 yield chunk.content
+                
+        # Akış sonunda doğrulanabilir kaynak dipnotları ekle
+        if citations:
+            yield "\n\n---\n**📚 Referans Kılavuz Sayfaları:**\n" + "\n".join([f"* {c}" for c in citations])
     except Exception as e:
         safe_print(f"[RAGStreamError] Exception during stream generation: {e}")
         import traceback
         traceback.print_exc()
         yield f"\n\n⚠️ Yanıt üretilirken bir hata oluştu: {str(e)}"
+
+
+def explain_diff_with_rag(element_name: str, diff_type: str = "added", file_name: str = "") -> dict:
+    """
+    Takes a schema diff element (e.g. 'eGiderPusulasiType' or 'operatorUygulamaBilgi'),
+    searches the ingested PDF guides for its legislative rationale and usage scenario,
+    and returns a concise 2-3 sentence explanation with citations.
+    """
+    if not os.environ.get("GEMINI_API_KEY"):
+        return {
+            "explanation": "Kılavuz açıklaması için Gemini API anahtarı tanımlanmalıdır.",
+            "citations": []
+        }
+        
+    query = f"{element_name} {file_name} ne işe yarar hangi senaryoda kullanılır kılavuz açıklaması zorunluluk"
+    try:
+        results = get_hybrid_context(query)
+    except Exception:
+        results = []
+        
+    if not results:
+        return {
+            "explanation": f"'{element_name}' elemanı için sistemde kayıtlı kılavuzlarda doğrudan bir açıklama paragrafı bulunamadı.",
+            "citations": []
+        }
+        
+    context_parts = []
+    citations = []
+    seen = set()
+    for doc in results[:6]:
+        src_name = os.path.basename(doc.metadata.get("source", "Kılavuz"))
+        page_num = doc.metadata.get("page", 0) + 1
+        key = f"{src_name}_{page_num}"
+        if key not in seen and len(citations) < 3:
+            seen.add(key)
+            citations.append({"title": src_name, "page": page_num})
+        context_parts.append(f"[{src_name} - Sayfa {page_num}]:\n{doc.page_content}")
+        
+    context_text = "\n\n".join(context_parts)
+    prompt = f"""
+    Sen bir Kıdemli e-Dönüşüm Sistem Analistisin.
+    GİB teknik kılavuzlarından alınan aşağıdaki metinlere dayanarak, XML şemasında tespit edilen '{element_name}' ({diff_type}) elemanının:
+    1. Mevzuattaki amacını (Neden eklendi/kullanılıyor?),
+    2. Hangi iş senaryosunda (Örn: İade, Kargo bilgisi, SMS/Operatör doğrulama vb.) zorunlu veya seçimli olduğunu
+    en fazla 2-3 vurucu ve net cümle ile özetle.
+    
+    [KILAVUZ METİNLERİ]:
+    {context_text}
+    """
+    try:
+        model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+        resp = model.invoke(prompt)
+        return {
+            "explanation": resp.content.strip(),
+            "citations": citations
+        }
+    except Exception as e:
+        return {
+            "explanation": f"Açıklama üretilemedi: {str(e)}",
+            "citations": citations
+        }
 
 

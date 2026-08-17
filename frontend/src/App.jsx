@@ -405,6 +405,34 @@ function App() {
     }
   };
 
+  const [diffExplanations, setDiffExplanations] = useState({});
+
+  const handleExplainDiffWithRag = async (diffItem, fileName) => {
+    const diffKey = `${fileName}_${diffItem.target}_${diffItem.xpath}`;
+    setDiffExplanations(prev => ({
+      ...prev,
+      [diffKey]: { loading: true, data: null, error: null }
+    }));
+    
+    const formData = new FormData();
+    formData.append('element_name', diffItem.target || '');
+    formData.append('diff_type', diffItem.type || 'added');
+    formData.append('file_name', fileName || '');
+
+    try {
+      const res = await axios.post(`${API_BASE}/api/rag/explain-diff`, formData);
+      setDiffExplanations(prev => ({
+        ...prev,
+        [diffKey]: { loading: false, data: res.data.data, error: null }
+      }));
+    } catch (err) {
+      setDiffExplanations(prev => ({
+        ...prev,
+        [diffKey]: { loading: false, data: null, error: err.response?.data?.detail || 'Kılavuz açıklaması alınamadı.' }
+      }));
+    }
+  };
+
   const [geminiKey, setGeminiKey] = useState('');
 
   const [keyLoading, setKeyLoading] = useState(false);
@@ -1059,33 +1087,74 @@ function App() {
                                           </div>
                                        </div>
                                        {file.diff.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950 rounded-lg">Ana dosya eklendi veya kaldırıldı. (Kapsayıcı değişiklik)</p>}
-                                {file.diff.map((diffItem, dIdx) => (
-                                   <div key={dIdx} className={`p-4 rounded-xl text-sm border ${
-                                      diffItem.type.includes('added') ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900' :
-                                      diffItem.type.includes('removed') ? 'bg-red-50/50 border-red-200 text-red-900' : 
-                                      'bg-amber-50/50 border-amber-200 text-amber-900'
-                                   }`}>
-                                      <div className="flex items-center gap-2 mb-2">
-                                        {diffItem.type.includes('added') && <div className="w-2 h-2 rounded-full bg-emerald-500"></div>}
-                                        {diffItem.type.includes('removed') && <div className="w-2 h-2 rounded-full bg-red-500"></div>}
-                                        {diffItem.type.includes('modified') && <div className="w-2 h-2 rounded-full bg-amber-500"></div>}
-                                        <p className="font-bold text-base">{diffItem.target}</p>
-                                      </div>
-                                      <p className="text-slate-800 dark:text-slate-200 ml-4 font-semibold text-base mb-1">{diffItem.human_readable || diffItem.message}</p>
-                                      <p className="text-slate-500 dark:text-slate-400 ml-4 text-xs">Teknik Log: {diffItem.message}</p>
-                                      
-                                      {diffItem.xpath && (
-                                        <details className="mt-3 ml-4">
-                                           <summary className="text-xs text-slate-500 dark:text-slate-400 cursor-pointer hover:text-indigo-600 font-semibold transition-colors">Teknik XPath Yolu Göster...</summary>
-                                           <div className="mt-2 p-3 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono break-all overflow-x-auto shadow-inner">
-                                             {diffItem.xpath}
+                                        {file.diff.map((diffItem, dIdx) => {
+                                           const diffKey = `${file.file}_${diffItem.target}_${diffItem.xpath}`;
+                                           const expState = diffExplanations[diffKey];
+                                           
+                                           return (
+                                           <div key={dIdx} className={`p-4 rounded-xl text-sm border ${
+                                              diffItem.type.includes('added') ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900' :
+                                              diffItem.type.includes('removed') ? 'bg-red-50/50 border-red-200 text-red-900' : 
+                                              'bg-amber-50/50 border-amber-200 text-amber-900'
+                                           }`}>
+                                              <div className="flex justify-between items-center mb-2">
+                                                <div className="flex items-center gap-2">
+                                                  {diffItem.type.includes('added') && <div className="w-2 h-2 rounded-full bg-emerald-500"></div>}
+                                                  {diffItem.type.includes('removed') && <div className="w-2 h-2 rounded-full bg-red-500"></div>}
+                                                  {diffItem.type.includes('modified') && <div className="w-2 h-2 rounded-full bg-amber-500"></div>}
+                                                  <p className="font-bold text-base">{diffItem.target}</p>
+                                                </div>
+                                                <button
+                                                  onClick={() => handleExplainDiffWithRag(diffItem, file.file)}
+                                                  disabled={expState?.loading}
+                                                  className="px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-xs font-bold rounded-lg border border-indigo-200 dark:border-indigo-800 transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                                                >
+                                                  <BookOpen className="w-3.5 h-3.5" />
+                                                  {expState?.loading ? 'Kılavuz Taranıyor...' : 'Kılavuz Açıklaması'}
+                                                </button>
+                                              </div>
+                                              <p className="text-slate-800 dark:text-slate-200 ml-4 font-semibold text-base mb-1">{diffItem.human_readable || diffItem.message}</p>
+                                              <p className="text-slate-500 dark:text-slate-400 ml-4 text-xs">Teknik Log: {diffItem.message}</p>
+                                              
+                                              {expState?.data && (
+                                                <div className="mt-3 ml-4 p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-indigo-200 dark:border-indigo-800/60 shadow-sm animate-fadeIn">
+                                                   <div className="flex items-center gap-2 mb-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-400">
+                                                      <BookOpen className="w-4 h-4 text-indigo-500" />
+                                                      <span>GİB Teknik Kılavuz Değerlendirmesi:</span>
+                                                   </div>
+                                                   <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                                                      {expState.data.explanation}
+                                                   </p>
+                                                   {expState.data.citations?.length > 0 && (
+                                                      <div className="mt-2 flex flex-wrap gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                                                         {expState.data.citations.map((c, cIdx) => (
+                                                            <span key={cIdx} className="text-[11px] bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-md font-mono font-medium border border-indigo-200 dark:border-indigo-800">
+                                                               📄 {c.title} (Sayfa {c.page})
+                                                            </span>
+                                                         ))}
+                                                      </div>
+                                                   )}
+                                                </div>
+                                              )}
+                                              {expState?.error && (
+                                                <div className="mt-2 ml-4 text-xs text-rose-500 font-medium">
+                                                   ⚠️ {expState.error}
+                                                </div>
+                                              )}
+
+                                              {diffItem.xpath && (
+                                                <details className="mt-3 ml-4">
+                                                   <summary className="text-xs text-slate-500 dark:text-slate-400 cursor-pointer hover:text-indigo-600 font-semibold transition-colors">Teknik XPath Yolu Göster...</summary>
+                                                   <div className="mt-2 p-3 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono break-all overflow-x-auto shadow-inner">
+                                                     {diffItem.xpath}
+                                                   </div>
+                                                </details>
+                                              )}
                                            </div>
-                                        </details>
-                                      )}
-                                   </div>
-                                ))}
-                              </div>
-                           )}
+                                           );
+                                        })}
+                                      </div>
+                                   )}
                                </div>
                              );
                           })}
