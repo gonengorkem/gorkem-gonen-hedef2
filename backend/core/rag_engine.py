@@ -393,10 +393,6 @@ def query_rag(query_text: str):
     2. Kesinlikle "bağlamda bilgi bulunmamaktadır" veya çekimser/kısa yanıtlar verme. Bilgileri kategorize ederek (Belge Yapısı, Şema Değişiklikleri, İade Senaryoları, Raporlama vb.) açıkla.
     3. Markdown başlıkları, tablolar ve emojiler kullanarak okumayı kolaylaştır.
 
-    [GÜNCEL TÜRKİYE MEVZUAT BİLGİLERİ]:
-    * Türkiye'deki yasal KDV oranları Temmuz 2023 tarihinde güncellenmiştir.
-    * Güncel KDV oranları: %0 (İstisna/Muafiyet), %1, %10 (Eski %8 olanlar %10 yapıldı) ve %20 (Eski %18 olanlar %20 yapıldı) şeklindedir.
-
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
 
@@ -450,10 +446,6 @@ async def query_rag_stream(query_text: str):
     1. Kullanıcı paket analizini veya eski belgelere göre nelerin değiştiğini sorduğunda; hem veritabanından çekilen kılavuz metinlerini hem de bir e-Dönüşüm uzmanı olarak bildiğin teknik standartları (UBL 2.1 CreditNote, `ProfileID = GIDERPUSULASI`, `CreditNoteTypeCode` (`SATIS` / `IADE`), `eArsiv.xsd` şemasına eklenen `eGiderPusulasiType` ve `eGiderPusulasiIptal` elemanları, İade senaryoları (`EARSIV_FATURA`, `BELGESIZ`, `SATIS_FISI`), SMS/Operatör doğrulama `operatorUygulamaBilgi`, Kargo bilgileri `kargoBilgi` ve `giderPusulasi.xslt` görsel tasarımı) birleştirerek tam teşekküllü bir analist raporu hazırla.
     2. Kesinlikle "bağlamda bilgi bulunmamaktadır" veya çekimser/kısa yanıtlar verme. Bilgileri kategorize ederek (Belge Yapısı, Şema Değişiklikleri, İade Senaryoları, Raporlama vb.) açıkla.
     3. Markdown başlıkları, tablolar ve emojiler kullanarak okumayı kolaylaştır.
-
-    [GÜNCEL TÜRKİYE MEVZUAT BİLGİLERİ]:
-    * Türkiye'deki yasal KDV oranları Temmuz 2023 tarihinde güncellenmiştir.
-    * Güncel KDV oranları: %0 (İstisna/Muafiyet), %1, %10 (Eski %8 olanlar %10 yapıldı) ve %20 (Eski %18 olanlar %20 yapıldı) şeklindedir.
 
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}

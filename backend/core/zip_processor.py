@@ -84,7 +84,7 @@ def extract_and_filter_zip(zip_filepath: str) -> dict:
                 ext = os.path.splitext(file)[1].lower()
                 if ext in TARGET_EXTENSIONS:
                     abs_path = os.path.join(root, file)
-                    rel_path = os.path.basename(file)
+                    rel_path = os.path.relpath(abs_path, extraction_dir).replace('\\', '/')
                     extracted_files[rel_path] = abs_path
             
     except Exception as e:

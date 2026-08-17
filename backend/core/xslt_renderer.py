@@ -31,9 +31,10 @@ def render_ubl_to_html(xml_content: bytes) -> str:
         if not xslt_bytes:
             raise ValueError("Yüklenen XML dosyası içerisinde render edilebilecek embedded bir XSLT (Tasarım) dosyası bulunamadı.")
             
-        # 2. XSLT dosyasını yükle ve dönüştürücüyü oluştur
+        # 2. XSLT dosyasını yükle ve dönüştürücüyü oluştur (Güvenlik: DENY_ALL ile dosya okuma/yazma/ağ erişimi engellenir)
         xslt_root = etree.fromstring(xslt_bytes)
-        transform = etree.XSLT(xslt_root)
+        ac = etree.XSLTAccessControl.DENY_ALL
+        transform = etree.XSLT(xslt_root, access_control=ac)
         
         # 3. XML'i XSLT kullanarak HTML'e dönüştür
         result_tree = transform(root)
