@@ -673,11 +673,13 @@ function App() {
   const handleSendChat = async (userMsg) => {
     if (!userMsg.trim()) return;
     
+    const currentHistory = chatMessages.slice(-4);
     setChatMessages(prev => [...prev, {role: 'user', text: userMsg}]);
     setChatLoading(true);
     
     const formData = new FormData();
     formData.append('query', userMsg);
+    formData.append('history', JSON.stringify(currentHistory));
     
     try {
       const resp = await axios.post(`${API_BASE}/api/rag/chat`, formData);
@@ -694,6 +696,7 @@ function App() {
   const handleSendChatStream = async (userMsg) => {
     if (!userMsg.trim()) return;
     
+    const currentHistory = chatMessages.slice(-4);
     setChatMessages(prev => [...prev, {role: 'user', text: userMsg}]);
     setChatLoading(true);
     
@@ -702,6 +705,7 @@ function App() {
     
     const formData = new FormData();
     formData.append('query', userMsg);
+    formData.append('history', JSON.stringify(currentHistory));
     
     try {
       const response = await fetch(`${API_BASE}/api/rag/chat/stream`, {

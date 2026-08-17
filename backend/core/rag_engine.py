@@ -146,31 +146,105 @@ def warmup_rag_engine():
         safe_print(f"[RAGEngine] Warmup warning: {e}")
 
 
+def load_pdf_with_docling_or_fallback(file_path: str):
+    """
+    Parses PDF using Docling in pure offline mode (do_ocr=False, do_table_structure=True),
+    preserving element/rule tables as clean Markdown tables (| Col | Col |) and headers.
+    Falls back gracefully to PyPDFLoader if Docling is unavailable or fails.
+    """
+    from langchain_core.documents import Document
+    
+    # 1. Try Docling offline parsing (Tables & Structure aware)
+    try:
+        pipeline_options = PdfPipelineOptions(
+            do_ocr=False,
+            do_table_structure=True
+        )
+        pdf_format_option = PdfFormatOption(
+            pipeline_options=pipeline_options,
+            backend=PyPdfiumDocumentBackend
+        )
+        converter = DocumentConverter(
+            format_options={InputFormat.PDF: pdf_format_option}
+        )
+        safe_print(f"[RAGEngine] Docling ile yapısal (Tablo-duyarlı) ayrıştırılıyor: {os.path.basename(file_path)}")
+        conv_result = converter.convert(file_path)
+        markdown_text = conv_result.document.export_to_markdown()
+        if markdown_text and len(markdown_text.strip()) > 50:
+            return [Document(page_content=markdown_text, metadata={"source": os.path.basename(file_path)})]
+    except Exception as e:
+        safe_print(f"[RAGEngine] Docling ayrıştırması atlandı ({e}), PyPDFLoader fallback devreye giriyor...")
+
+    # 2. PyPDFLoader Fallback
+    from langchain_community.document_loaders import PyPDFLoader
+    loader = PyPDFLoader(file_path)
+    return loader.load()
+
+def split_documents_semantic(documents: list, meta_info: dict) -> list:
+    """
+    Splits documents preserving Markdown header hierarchy and table boundaries,
+    adding rich version/type metadata to each chunk.
+    """
+    from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+    
+    headers_to_split_on = [
+        ("#", "h1"),
+        ("##", "h2"),
+        ("###", "h3"),
+        ("####", "h4"),
+    ]
+    header_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1400,
+        chunk_overlap=200,
+        length_function=len
+    )
+    
+    all_chunks = []
+    for doc in documents:
+        content = doc.page_content
+        # If document is formatted with Markdown headers
+        if any(h in content for h in ["# ", "## ", "### "]):
+            try:
+                header_chunks = header_splitter.split_text(content)
+                for h_chunk in header_chunks:
+                    if len(h_chunk.page_content) > 1600:
+                        sub_chunks = char_splitter.split_documents([h_chunk])
+                        for sc in sub_chunks:
+                            sc.metadata.update(doc.metadata)
+                            sc.metadata.update(meta_info)
+                            all_chunks.append(sc)
+                    else:
+                        h_chunk.metadata.update(doc.metadata)
+                        h_chunk.metadata.update(meta_info)
+                        all_chunks.append(h_chunk)
+                continue
+            except Exception:
+                pass
+                
+        # Standard splitting fallback
+        chunks = char_splitter.split_documents([doc])
+        for c in chunks:
+            c.metadata.update(doc.metadata)
+            c.metadata.update(meta_info)
+            all_chunks.append(c)
+            
+    return filter_complex_metadata(all_chunks)
+
 def ingest_document(file_path: str):
-    """Loads a PDF document and adds it to the Chroma vector database."""
+    """Loads a PDF document and adds it to the Chroma vector database with table-aware parsing."""
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
-    from langchain_community.document_loaders import PyPDFLoader
-    loader = PyPDFLoader(file_path)
-    pages = loader.load()
+    pages = load_pdf_with_docling_or_fallback(file_path)
     meta_info = extract_metadata_from_path(file_path)
-    for p in pages:
-        p.metadata.update(meta_info)
-        
-    # Bölütleme (Chunking) ayarları: Belgeleri LLM'in anlayacağı kısalıkta dilimlere ayırır.
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=250,
-        length_function=len
-    )
-    chunks = text_splitter.split_documents(pages)
-    chunks = filter_complex_metadata(chunks)
+    
+    chunks = split_documents_semantic(pages, meta_info)
     
     # Standalone Chroma yerine Local Persistent DB Kullan
     db = get_db()
     
-    # Ücretsiz Gemini API limitleri (Dakikada 100 İstek) için chunk'ları yavaş yavaş gönder
+    # Batch add to vector DB
     batch_size = 80
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
@@ -184,10 +258,6 @@ def ingest_document(file_path: str):
             else:
                 raise e
                 
-        if i + batch_size < len(chunks):
-            pass # Sleep removed
-            
-    
     return len(chunks)
 
 import glob
@@ -202,32 +272,18 @@ def ingest_directory(dir_path: str):
         raise ValueError("Yüklenen arşiv içerisinde hiçbir PDF (Kılavuz) dosyası bulunamadı.")
         
     all_chunks = []
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=250,
-        length_function=len
-    )
-    
-    from langchain_community.document_loaders import PyPDFLoader
-
     for pdf in pdf_files:
         try:
-            safe_print(f"PyPDF ile okunuyor: {pdf}")
-            loader = PyPDFLoader(pdf)
-            pages = loader.load()
+            pages = load_pdf_with_docling_or_fallback(pdf)
             meta_info = extract_metadata_from_path(pdf)
-            for p in pages:
-                p.metadata.update(meta_info)
-            chunks = text_splitter.split_documents(pages)
+            chunks = split_documents_semantic(pages, meta_info)
             all_chunks.extend(chunks)
         except Exception as e:
             safe_print(f"Hata oluşan PDF dosyası atlanıyor: {pdf} - Error: {str(e)}")
             
     if not all_chunks:
          raise ValueError("PDF dosyaları okunurken içeriği sıfır veya hata oluştu.")
-         
-    all_chunks = filter_complex_metadata(all_chunks)
-         
+          
     # Chroma Persistent Sunucusuna Bağlan
     db = get_db()
     
@@ -244,10 +300,6 @@ def ingest_directory(dir_path: str):
             else:
                 raise e
                 
-        if i + batch_size < len(all_chunks):
-            pass # Sleep removed
-            
-    
     return len(all_chunks)
 
 def normalize_turkish(text: str) -> str:
@@ -400,8 +452,8 @@ def extract_metadata_from_path(file_path: str) -> dict:
         "doc_year": score[3] if score[3] > 0 else 2026
     }
 
-def query_rag(query_text: str):
-    """Queries the Chroma vector database and generates a high-trust grounded answer using Gemini."""
+def query_rag(query_text: str, history: list = None):
+    """Queries the Chroma vector database and generates a high-trust grounded answer using Gemini with conversation memory."""
     if not os.environ.get("GEMINI_API_KEY"):
         raise ValueError("Lütfen projenin backend dizinindeki .env dosyasına GEMINI_API_KEY bilginizi ekleyin.")
         
@@ -435,6 +487,17 @@ def query_rag(query_text: str):
         context_text = "\n\n---\n\n".join(context_parts)
         sources = list(set([os.path.basename(doc.metadata.get("source", "Bilinmeyen Kaynak")) for doc in results]))
         
+    history_text = ""
+    if history and isinstance(history, list):
+        history_parts = []
+        for h in history[-4:]:
+            role = "Kullanıcı" if h.get("role") == "user" else "Asistan"
+            text = h.get("text", "").strip()
+            if text:
+                history_parts.append(f"{role}: {text}")
+        if history_parts:
+            history_text = "\n[ÖNCEKİ DİYALOG GEÇMİŞİ]:\n" + "\n".join(history_parts) + "\n"
+
     prompt_template = f"""
     Sen, Gelir İdaresi Başkanlığı (GİB) e-Dönüşüm standartları, UBL-TR XML şemaları ve entegrasyon kuralları konusunda uzmanlaşmış **Kıdemli Mevzuat ve Sistem Analistisin**.
 
@@ -444,11 +507,12 @@ def query_rag(query_text: str):
     TEMEL İLKELER & GÜVENİLİRLİK KURALLARI:
     1. **Kesin Doğruluk (Ground Truth):** Yanıtını öncelikle aşağıdaki [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ] içeriğindeki resmi metinlere dayandır. Bilgileri verirken ilgili kılavuz adına ve sayfa/madde numarasına açıkça atıfta bulun.
     2. **Şeffaf Ayrım (Halüsinasyon Yasağı):** Sorulan kural veya detay sağlanan kılavuz parçalarında yer almıyorsa, kesinlikle uydurma kural veya tahmin üretme. *"Bu detay sistemde yüklü olan kılavuz sayfalarında açıkça yer almamaktadır; genel UBL 2.1 standardına göre..."* şeklinde şeffaf bir ayrım belirt.
-    3. **Yapılandırılmış Format:** Analistlerin hızla test senaryosu ve iş kuralı çıkarabilmesi için cevabını net başlıklar, maddeler ve teknik XML/XPath örnekleri ile sun.
+    3. **Diyalog Sürekliliği:** Eğer varsa önceki diyalog geçmişini bağlam olarak dikkate al.
+    4. **Yapılandırılmış Format:** Analistlerin hızla test senaryosu ve iş kuralı çıkarabilmesi için cevabını net başlıklar, maddeler ve teknik XML/XPath örnekleri ile sun.
 
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
-
+    {history_text}
     Kullanıcının Sorusu: {query_text}
     """
     
@@ -464,8 +528,8 @@ def query_rag(query_text: str):
 
 
 
-async def query_rag_stream(query_text: str):
-    """Queries the Chroma vector database and generates a streaming answer using Gemini with footnotes."""
+async def query_rag_stream(query_text: str, history: list = None):
+    """Queries the Chroma vector database and generates a streaming answer using Gemini with footnotes and conversation memory."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         yield "⚠️ Asistanı kullanabilmek için lütfen API Key alanından Gemini API Key bilginizi tanımlayınız."
@@ -499,6 +563,17 @@ async def query_rag_stream(query_text: str):
                 
         context_text = "\n\n---\n\n".join(context_parts)
         
+    history_text = ""
+    if history and isinstance(history, list):
+        history_parts = []
+        for h in history[-4:]:
+            role = "Kullanıcı" if h.get("role") == "user" else "Asistan"
+            text = h.get("text", "").strip()
+            if text:
+                history_parts.append(f"{role}: {text}")
+        if history_parts:
+            history_text = "\n[ÖNCEKİ DİYALOG GEÇMİŞİ]:\n" + "\n".join(history_parts) + "\n"
+
     prompt_template = f"""
     Sen, Gelir İdaresi Başkanlığı (GİB) e-Dönüşüm standartları, UBL-TR XML şemaları ve entegrasyon kuralları konusunda uzmanlaşmış **Kıdemli Mevzuat ve Sistem Analistisin**.
 
@@ -508,11 +583,12 @@ async def query_rag_stream(query_text: str):
     TEMEL İLKELER & GÜVENİLİRLİK KURALLARI:
     1. **Kesin Doğruluk (Ground Truth):** Yanıtını öncelikle aşağıdaki [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ BİLGİLERİ] içeriğindeki resmi metinlere dayandır.
     2. **Şeffaf Ayrım (Halüsinasyon Yasağı):** Sorulan kural veya detay sağlanan kılavuz parçalarında yer almıyorsa, kesinlikle uydurma kural veya tahmin üretme. *"Bu detay sistemde yüklü olan kılavuz sayfalarında açıkça yer almamaktadır..."* şeklinde şeffaf bir ayrım belirt.
-    3. **Yapılandırılmış Format:** Analistlerin hızla test senaryosu ve iş kuralı çıkarabilmesi için cevabını net başlıklar, maddeler ve teknik XML/XPath örnekleri ile sun.
+    3. **Diyalog Sürekliliği:** Eğer varsa önceki diyalog geçmişini bağlam olarak dikkate al.
+    4. **Yapılandırılmış Format:** Analistlerin hızla test senaryosu ve iş kuralı çıkarabilmesi için cevabını net başlıklar, maddeler ve teknik XML/XPath örnekleri ile sun.
 
     [VERİTABANINDAN ÇEKİLEN İLGİLİ KILAVUZ VE ŞEMA BİLGİLERİ]:
     {context_text}
-
+    {history_text}
     Kullanıcının Sorusu: {query_text}
     """
 

@@ -430,19 +430,20 @@ async def api_rag_ingest(file: UploadFile = File(...)):
             os.remove(tmp_path)
 
 @app.post("/api/rag/chat")
-async def api_rag_chat(query: str = Form(...)):
+async def api_rag_chat(
+    query: str = Form(...),
+    history: str = Form("[]")
+):
     try:
-        from core.redis_cache import redis_cache
-        cache_key = f"rag:chat:{query.strip()}"
-        cached_res = redis_cache.get(cache_key)
-        if cached_res:
-            print(f"[RedisCache] RAG Chat cache hit! Returning cached answer.")
-            return {"status": "success", "data": cached_res}
-            
+        import json
         import asyncio
-        res = await asyncio.to_thread(query_rag, query)
-        # Cache RAG answer for 12 hours
-        redis_cache.set(cache_key, res, expire_seconds=43200)
+        parsed_history = []
+        try:
+            parsed_history = json.loads(history) if history else []
+        except Exception:
+            pass
+            
+        res = await asyncio.to_thread(query_rag, query, parsed_history)
         return {"status": "success", "data": res}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -451,9 +452,19 @@ async def api_rag_chat(query: str = Form(...)):
 
 
 @app.post("/api/rag/chat/stream")
-async def api_rag_chat_stream(query: str = Form(...)):
+async def api_rag_chat_stream(
+    query: str = Form(...),
+    history: str = Form("[]")
+):
     try:
-        return StreamingResponse(query_rag_stream(query), media_type="text/plain") # type: ignore
+        import json
+        parsed_history = []
+        try:
+            parsed_history = json.loads(history) if history else []
+        except Exception:
+            pass
+            
+        return StreamingResponse(query_rag_stream(query, parsed_history), media_type="text/plain") # type: ignore
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
