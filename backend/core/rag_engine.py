@@ -153,6 +153,7 @@ def ingest_document(file_path: str):
         
     from langchain_community.document_loaders import PyPDFLoader
     loader = PyPDFLoader(file_path)
+    pages = loader.load()
     meta_info = extract_metadata_from_path(file_path)
     for p in pages:
         p.metadata.update(meta_info)
