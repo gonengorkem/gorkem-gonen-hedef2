@@ -169,9 +169,21 @@ def load_pdf_with_docling_or_fallback(file_path: str):
         )
         safe_print(f"[RAGEngine] Docling ile yapısal (Tablo-duyarlı) ayrıştırılıyor: {os.path.basename(file_path)}")
         conv_result = converter.convert(file_path)
-        markdown_text = conv_result.document.export_to_markdown()
-        if markdown_text and len(markdown_text.strip()) > 50:
-            return [Document(page_content=markdown_text, metadata={"source": os.path.basename(file_path)})]
+        doc = conv_result.document
+
+        # Sayfa bazlı export: tek bir dev Document yerine PyPDFLoader ile aynı sözleşmeyi
+        # (0 tabanlı "page" metadata) koruyarak her sayfayı ayrı Document olarak döndür.
+        # Aksi halde downstream kaynak/sayfa atıfları (query_rag) hep "Sayfa 1" gösterir.
+        page_docs = []
+        for page_no in range(1, doc.num_pages() + 1):
+            page_markdown = doc.export_to_markdown(page_no=page_no)
+            if page_markdown and len(page_markdown.strip()) > 20:
+                page_docs.append(Document(
+                    page_content=page_markdown,
+                    metadata={"source": os.path.basename(file_path), "page": page_no - 1}
+                ))
+        if page_docs:
+            return page_docs
     except Exception as e:
         safe_print(f"[RAGEngine] Docling ayrıştırması atlandı ({e}), PyPDFLoader fallback devreye giriyor...")
 
@@ -418,8 +430,22 @@ def get_hybrid_context(query_text: str):
                 seen.add(snippet)
                 merged.append(doc)
             
-    # En güncel kılavuzları en üstte olacak şekilde kararlı sıralama (stable sort) uygula
-    merged.sort(key=extract_document_version_score, reverse=True)
+    # Relevance sırası (yukarıdaki keyword/vektör birleştirme) birincil öncelik kalır.
+    # Versiyon/tarih sadece AYNI kılavuzun (doc_title) birden fazla versiyonu vektör DB'de
+    # aynı anda mevcutsa, o grup içinde en güncelini öne çıkaran bir tie-breaker'dır —
+    # farklı kılavuzlar arasında relevance sırasını ezmez.
+    group_rank = {}
+    for doc in merged:
+        title = doc.metadata.get("doc_title") or doc.metadata.get("source", "")
+        if title not in group_rank:
+            group_rank[title] = len(group_rank)
+
+    def _sort_key(doc):
+        title = doc.metadata.get("doc_title") or doc.metadata.get("source", "")
+        version_score = extract_document_version_score(doc)
+        return (group_rank[title], tuple(-v for v in version_score))
+
+    merged.sort(key=_sort_key)
     return merged[:15]
 
 
