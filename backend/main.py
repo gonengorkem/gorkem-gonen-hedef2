@@ -212,6 +212,13 @@ async def analyze_packages(
             print(f"[RedisCache] Failed to extract files on cache hit: {ex}. Proceeding without cache.")
             
     try:
+        # Clean previous session directories to prevent disk exhaustion leak
+        import shutil
+        if ACTIVE_EXTRACTION_SESSION.get("old_dir") and os.path.exists(ACTIVE_EXTRACTION_SESSION["old_dir"]):
+            shutil.rmtree(ACTIVE_EXTRACTION_SESSION["old_dir"], ignore_errors=True)
+        if ACTIVE_EXTRACTION_SESSION.get("new_dir") and os.path.exists(ACTIVE_EXTRACTION_SESSION["new_dir"]):
+            shutil.rmtree(ACTIVE_EXTRACTION_SESSION["new_dir"], ignore_errors=True)
+
         # Extract and filter target files
         old_data = extract_and_filter_zip(old_zip_path)
         new_data = extract_and_filter_zip(new_zip_path)
@@ -221,8 +228,10 @@ async def analyze_packages(
         ACTIVE_EXTRACTION_SESSION["new_dir"] = new_data["extraction_dir"]
         
         # Clean raw ZIP files, we only need extracted content now
-        os.remove(old_zip_path)
-        os.remove(new_zip_path)
+        if os.path.exists(old_zip_path):
+            os.remove(old_zip_path)
+        if os.path.exists(new_zip_path):
+            os.remove(new_zip_path)
 
         old_files_count = len(old_data["files"])
         new_files_count = len(new_data["files"])

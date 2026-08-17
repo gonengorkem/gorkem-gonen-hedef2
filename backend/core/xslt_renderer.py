@@ -7,7 +7,14 @@ def render_ubl_to_html(xml_content: bytes) -> str:
     applies the XSLT to the XML, and returns the resulting HTML string.
     """
     try:
-        parser = etree.XMLParser(remove_blank_text=False)
+        parser = etree.XMLParser(
+            resolve_entities=False,
+            no_network=True,
+            dtd_validation=False,
+            load_dtd=False,
+            huge_tree=False,
+            remove_blank_text=False
+        )
         root = etree.fromstring(xml_content, parser)
         
         # 1. GİB UBL Formatında XSLT dosyasını bul ("EmbeddedDocumentBinaryObject" içinde)

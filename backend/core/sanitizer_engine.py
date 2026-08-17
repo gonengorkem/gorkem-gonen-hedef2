@@ -9,8 +9,15 @@ def sanitize_ubl_xml(xml_content: bytes) -> bytes:
     and returns the sanitized XML bytestream.
     """
     try:
-        # Parse without altering original formatting too much
-        parser = etree.XMLParser(remove_blank_text=False)
+        # Parse without altering original formatting too much, hardened against XXE/Billion Laughs
+        parser = etree.XMLParser(
+            resolve_entities=False,
+            no_network=True,
+            dtd_validation=False,
+            load_dtd=False,
+            huge_tree=False,
+            remove_blank_text=False
+        )
         root = etree.fromstring(xml_content, parser)
         
         # We will loop through all elements and check their local-name

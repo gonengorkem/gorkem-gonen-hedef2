@@ -7,7 +7,15 @@ def parse_xml_file(filepath: str):
         # Encoding sorunlarını aşmak için binary okuyup lxml'e vermek daha güvenlidir
         with open(filepath, 'rb') as f:
             content = f.read()
-        parser = etree.XMLParser(recover=True, remove_blank_text=True)
+        parser = etree.XMLParser(
+            recover=True,
+            resolve_entities=False,
+            no_network=True,
+            dtd_validation=False,
+            load_dtd=False,
+            huge_tree=False,
+            remove_blank_text=True
+        )
         return etree.fromstring(content, parser=parser)
     except Exception as e:
         print(f"HATA: {filepath} dosyası parse edilemedi. Sebebi: {e}")

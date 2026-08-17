@@ -1,18 +1,30 @@
 from lxml import etree
 from lxml.isoschematron import Schematron
 
+def get_safe_xml_parser():
+    """Returns a hardened XML parser that blocks XXE, SSRF, and external DTD entity expansion."""
+    return etree.XMLParser(
+        resolve_entities=False,
+        no_network=True,
+        dtd_validation=False,
+        load_dtd=False,
+        huge_tree=False,
+        remove_blank_text=False
+    )
+
 def validate_xml_with_schematron(xml_file_path, sch_file_path):
     """
     Validates an XML file against a Schematron (.sch) ruleset.
     Returns a dictionary with validation status and SVRL error reports.
     """
     try:
+        parser = get_safe_xml_parser()
         # Parse SCH and initialize Schematron validator
-        sch_doc = etree.parse(sch_file_path)
+        sch_doc = etree.parse(sch_file_path, parser=parser)
         schematron = Schematron(sch_doc, store_report=True)
         
-        # Parse XML
-        xml_doc = etree.parse(xml_file_path)
+        # Parse XML with safe parser
+        xml_doc = etree.parse(xml_file_path, parser=parser)
         
         # Validate
         is_valid = schematron.validate(xml_doc)

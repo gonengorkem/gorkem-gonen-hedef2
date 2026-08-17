@@ -9,7 +9,15 @@ def find_xpaths_in_ubl(xml_base64: str, search_text: str) -> list:
     """
     try:
         xml_bytes = base64.b64decode(xml_base64)
-        parser = etree.XMLParser(recover=True, remove_blank_text=False)
+        parser = etree.XMLParser(
+            recover=True,
+            resolve_entities=False,
+            no_network=True,
+            dtd_validation=False,
+            load_dtd=False,
+            huge_tree=False,
+            remove_blank_text=False
+        )
         root = etree.fromstring(xml_bytes, parser)
         
         search_text = search_text.strip()
