@@ -176,7 +176,12 @@ def load_pdf_with_docling_or_fallback(file_path: str):
         # Aksi halde downstream kaynak/sayfa atıfları (query_rag) hep "Sayfa 1" gösterir.
         page_docs = []
         for page_no in range(1, doc.num_pages() + 1):
-            page_markdown = doc.export_to_markdown(page_no=page_no)
+            # compact_tables=True: Docling'in tablo hizalama icin sutunlara dolgu bosluk
+            # eklemesini engeller. Aksi halde bazi tablo-agirlikli sayfalar (orn. karekod
+            # semasi) %70+ bosluk karakterinden olusan chunk'lar uretiyor; bu hem context'i
+            # bosa harciyor hem de LLM'in bu deseni taklit ederek anlamsiz, bosluk dolu
+            # cevaplar uretmesine (gozlemlenen ~240s / bos yanit) yol aciyordu.
+            page_markdown = doc.export_to_markdown(page_no=page_no, compact_tables=True)
             if page_markdown and len(page_markdown.strip()) > 20:
                 page_docs.append(Document(
                     page_content=page_markdown,

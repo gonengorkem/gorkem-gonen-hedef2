@@ -143,6 +143,26 @@ cevap almak.
   `doc.export_to_markdown(page_no=...)` ile PyPDFLoader'la aynı sözleşmeyi (0 tabanlı
   `page` metadata, sayfa başına bir `Document`) koruyarak sayfa sayfa export ediyor.
   Yeni bir loader/parser eklerken bu sözleşmeyi (her chunk'ta doğru `page` metadata) koru.
+- **Docling tablo-dolgu (whitespace bloat) düzeltildi (2026-08-17):** 18-20 gerçek GİB
+  kılavuzu ingest edilip uçtan uca Q&A testi yapıldı (bkz. `scratchpad/rag_test.py` deseni).
+  Tablo ağırlıklı sayfalarda (örn. Karekod_Standardi_Kilavuzu) Docling'in varsayılan
+  `export_to_markdown()` çıktısı chunk içeriğinin **%70+'ını boşluk karakterine**
+  çevirebiliyordu (sütun hizalama dolgusu); bu, hem context'i israf ediyor hem de gözlemde
+  bir sorguyu 242 saniyeye uzatıp LLM'in bu deseni taklit ederek neredeyse tamamen boşluktan
+  oluşan anlamsız bir "cevap" üretmesine yol açıyordu. `export_to_markdown(..., 
+  compact_tables=True)` ile whitespace oranı ~%45'ten ~%16'ya düştü, aynı soru 41 saniyede
+  düzgün, dolu bir cevap döndürdü. Yeni bir Docling export çağrısı eklerken `compact_tables`
+  parametresini unutma.
+- **Manuel uçtan uca doğrulama sonucu (2026-08-17):** 18 e-Fatura/UBL-TR kılavuzu (1021 chunk)
+  izole bir test DB'sine ingest edilip 7 soruyla test edildi. Sonuçlar olumlu: kaynak/sayfa
+  atıfları artık doğru ve çeşitli (yukarıdaki fix sayesinde), cevaplar birden fazla kılavuzu
+  doğru şekilde sentezliyor, ve kasıtlı bir halüsinasyon testinde (ingest edilmemiş bir
+  e-Gider Pusulası detayı sorulduğunda) model **uydurmadı** — context'te bulduğu ilgisiz bir
+  örnek değeri doğru şekilde ayırt edip kapsamlı listenin kılavuzlarda yer almadığını açıkça
+  belirtti. `eval_rag.py`'deki mevcut eval seti e-Gider Pusulası'na özgü (`backend/guides/
+  e-Gider_Pusulasi_Paketi (1).rar` içinde, henüz ingest edilmedi) — `docs/ubldocs/` içindeki
+  e-Fatura kılavuzlarıyla test edilirken bu eval setini çalıştırmak anlamlı sonuç vermez,
+  önce ilgili RAR'ın extract edilip ingest edilmesi gerekir.
 
 ### `get_hybrid_context` sıralaması: relevance birincil, versiyon ikincil (2026-08-17)
 `get_hybrid_context()` (rag_engine.py) önceden birleştirilmiş (keyword+vektör, alaka
